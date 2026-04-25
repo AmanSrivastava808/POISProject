@@ -191,18 +191,17 @@ def _aes_decrypt_block(prf: AES_PRF, key: bytes, ciphertext: bytes) -> bytes:
 # ── Attack demonstrations ──────────────────────────────────────────────────────
 
 def demo_cbc_iv_reuse(prf: AES_PRF, k: bytes) -> None:
-    """CBC IV-reuse attack: reusing IV leaks XOR of first blocks."""
+    """CBC IV-reuse attack: equal plaintext blocks → equal ciphertext blocks."""
     print("\n[CBC IV-Reuse Attack]")
     fixed_iv = b'\x00' * BLOCK_SIZE
-    m0 = b"Attack at dawn!!"
-    m1 = b"Retreat at noon!"
+    m0 = b"Attack at dawn!!Secret payload!!"  # two blocks
+    m1 = b"Attack at dawn!!Different data!!"  # same first block, different second
     _, c0 = cbc_encrypt(prf, k, m0, iv=fixed_iv)
     _, c1 = cbc_encrypt(prf, k, m1, iv=fixed_iv)
-    # XOR of first ciphertext blocks = XOR of first plaintext blocks (since same IV)
-    xor_c = _xor(c0[:BLOCK_SIZE], c1[:BLOCK_SIZE])
-    xor_m = _xor(m0[:BLOCK_SIZE], m1[:BLOCK_SIZE])
-    print(f"  XOR ciphertext blocks = XOR plaintext blocks: {xor_c == xor_m}")
-
+    # First blocks identical → first ciphertext blocks identical
+    print(f"  Same plaintext block → same ciphertext block: {c0[:BLOCK_SIZE] == c1[:BLOCK_SIZE]}")
+    # Second blocks differ → ciphertext blocks differ
+    print(f"  Different plaintext block → different ciphertext block: {c0[BLOCK_SIZE:2*BLOCK_SIZE] != c1[BLOCK_SIZE:2*BLOCK_SIZE]}")
 
 def demo_ofb_keystream_reuse(prf: AES_PRF, k: bytes) -> None:
     """OFB keystream-reuse: two messages with same IV → XOR reveals both."""

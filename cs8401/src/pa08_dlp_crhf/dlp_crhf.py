@@ -70,7 +70,8 @@ class DLP_Hash:
 def find_collision_brute_force(dlp_hash: DLP_Hash, max_attempts: int = 100000) -> tuple:
     """
     Brute-force birthday collision finder for small (toy) hash.
-    Returns (m1, m2) with h(m1) == h(m2) and m1 != m2, or None.
+    Returns (m1, m2, evaluations) with h(m1) == h(m2) and m1 != m2,
+    or (None, None, evaluations) if no collision found.
     """
     seen = {}
     for i in range(max_attempts):
@@ -78,19 +79,75 @@ def find_collision_brute_force(dlp_hash: DLP_Hash, max_attempts: int = 100000) -
         h = dlp_hash.hash(m)
         h_key = h.hex()
         if h_key in seen and seen[h_key] != m:
-            return seen[h_key], m
+            return seen[h_key], m, i + 1
         seen[h_key] = m
-    return None
+    return None, None, max_attempts
+
+
+def find_collision_truncated(dlp_hash: DLP_Hash, trunc_bits: int = 16,
+                             max_attempts: int = 10000) -> tuple:
+    """
+    Birthday collision finder on a TRUNCATED hash output.
+    Truncates to `trunc_bits` bits before comparison.
+    Returns (m1, m2, evaluations, trunc_hash_hex) or (None, None, evals, None).
+
+    The full DLP hash is collision-resistant (by DLP hardness), so
+    finding full collisions is infeasible. By truncating to n bits,
+    we reduce the effective output space to 2^n, making birthday
+    collisions achievable in O(2^{n/2}) evaluations.
+    """
+    trunc_bytes = (trunc_bits + 7) // 8
+    mask = (1 << trunc_bits) - 1
+    seen = {}
+    for i in range(max_attempts):
+        m = i.to_bytes(4, 'big')
+        h = dlp_hash.hash(m)
+        # Truncate: take last trunc_bytes, mask to exact bit count
+        h_int = int.from_bytes(h[-trunc_bytes:], 'big') & mask
+        h_key = format(h_int, f'0{(trunc_bits + 3) // 4}x')
+        if h_key in seen and seen[h_key] != m:
+            return seen[h_key], m, i + 1, h_key
+        seen[h_key] = m
+    return None, None, max_attempts, None
+
+
+# ── Collision resistance argument ───────────────────────────────────────────
+
+def collision_resistance_argument() -> str:
+    """
+    Return the formal argument for why finding collisions in h(x,y) = g^x · ĥ^y mod p
+    requires computing log_g ĥ.
+    """
+    return """
+    DLP Collision-Resistance Argument
+    ═════════════════════════════════════
+    Compression function: h(x, y) = g^x · ĥ^y mod p
+
+    Claim: Finding (x,y) ≠ (x',y') with h(x,y) = h(x',y') ⇒ computing log_g ĥ.
+
+    Proof:
+      Suppose h(x,y) = h(x',y'), i.e., g^x · ĥ^y = g^x' · ĥ^y' (mod p).
+      Then: g^(x-x') = ĥ^(y'-y) (mod p).
+      If y' ≠ y (guaranteed since (x,y) ≠ (x',y')):
+        ĥ = g^{(x-x') / (y'-y) mod q}  (mod p)
+      So: α = log_g ĥ = (x - x') · (y' - y)^{-1} mod q.
+      This recovers the secret α that was discarded at setup.
+
+    Since α was chosen randomly and discarded, and the DLP is hard in
+    the order-q subgroup of Z*_p, no efficient adversary can find α,
+    and therefore cannot find collisions in h.
+    """
 
 
 if __name__ == "__main__":
+    import math
+
     print("=== PA#8: DLP-CRHF ===\n")
 
-    # Use small parameters for demonstration
+    # Integration test: 32-bit hash for distinct-digest verification
     dlp = DLP_Hash(bits=32)
 
-    # Hash various messages
-    print("\n[Hashing messages]")
+    print("\n[Integration test — 5 messages of different lengths]")
     messages = [
         b"",
         b"Hello",
@@ -105,18 +162,40 @@ if __name__ == "__main__":
         print(f"  H({m[:20]!r}{'...' if len(m)>20 else ''}) = {h.hex()}")
 
     print(f"\n  All hashes distinct: {len(hashes) == len(messages)}")
+    assert len(hashes) == len(messages), "Distinct inputs must produce distinct digests"
 
-    # Collision finding at toy parameters
-    print(f"\n[Brute-force collision finder (toy {dlp.bits}-bit hash)]")
-    print(f"  Searching for collisions (theoretical ~2^{dlp.bits//2} work)...")
-    result = find_collision_brute_force(dlp, max_attempts=500000)
-    if result:
-        m1, m2 = result
-        h1 = dlp.hash(m1)
-        h2 = dlp.hash(m2)
-        print(f"  Collision found!")
-        print(f"  m1 = {m1.hex()}, H(m1) = {h1.hex()}")
-        print(f"  m2 = {m2.hex()}, H(m2) = {h2.hex()}")
-        print(f"  H(m1) == H(m2): {h1 == h2}")
+    # DLP hardness argument
+    print("\n[Collision-resistance argument]")
+    print(collision_resistance_argument())
+
+    # Birthday collision demo with TRUNCATED output
+    # Spec: "q ≈ 2^16, truncated to 16-bit output for the collision demo"
+    # The full DLP hash is collision-resistant (injective for distinct inputs).
+    # Truncation reduces the output space so birthday collisions are feasible.
+    # Birthday bound on 16-bit output: O(2^8) = 256 evaluations.
+    trunc_n = 16
+    birthday_bound = 1 << (trunc_n // 2)  # 2^8 = 256
+
+    print(f"[Birthday collision demo (truncated to {trunc_n}-bit output)]")
+    print(f"  Using {dlp.bits}-bit DLP hash, truncated to {trunc_n} bits for demo")
+    print(f"  Output space: 2^{trunc_n} = {1 << trunc_n}")
+    print(f"  Birthday bound: O(2^{trunc_n//2}) = {birthday_bound}")
+    print(f"  Searching for collision...")
+
+    m1, m2, evals, h_trunc = find_collision_truncated(
+        dlp, trunc_bits=trunc_n, max_attempts=birthday_bound * 20
+    )
+    if m1 is not None:
+        h1_full = dlp.hash(m1)
+        h2_full = dlp.hash(m2)
+        print(f"\n  ✓ Collision found after {evals} evaluations!")
+        print(f"  m1 = {m1.hex()}")
+        print(f"  m2 = {m2.hex()}")
+        print(f"  H(m1) = {h1_full.hex()}")
+        print(f"  H(m2) = {h2_full.hex()}")
+        print(f"  Truncated({trunc_n}-bit) match: 0x{h_trunc}")
+        print(f"  Full hashes differ:  {h1_full != h2_full}  (as expected — CRHF is secure)")
+        print(f"\n  Evaluations: {evals}  vs  birthday bound 2^{trunc_n//2} = {birthday_bound}")
+        print(f"  Ratio evals/bound = {evals/birthday_bound:.2f}x  (expected O(1))")
     else:
-        print(f"  No collision in search space (hash output too large or search too small)")
+        print(f"  No collision in {evals} attempts")

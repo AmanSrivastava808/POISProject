@@ -75,37 +75,94 @@ def build_toy_hash(block_size: int = 16) -> MerkleDamgard:
     return MerkleDamgard(toy_xor_compress, iv, block_size)
 
 
-# ── Length-extension attack demonstration ────────────────────────────────────
+# ── Collision propagation demo ────────────────────────────────────────────────
 
-def demonstrate_length_extension(md: MerkleDamgard) -> None:
+def demonstrate_collision_propagation(md: MerkleDamgard) -> None:
     """
-    Show that Merkle-Damgård is vulnerable to length-extension:
-    Given H(m), attacker can compute H(m || pad(m) || extra) without knowing m.
+    Show the MD security reduction: if two inputs collide under the
+    compression function, they also collide under the full MD hash.
+    This concretely illustrates why security of H reduces to security of h.
     """
-    print("\n=== Length-Extension Attack Demo ===")
-    m = b"original message"
-    extra = b"extended"
+    bs = md.block_size
+    print("\n=== Collision Propagation Demo ===")
+    print(f"  Compression function: toy_xor_compress (cv XOR block)")
+    print(f"  Block size: {bs} bytes\n")
 
-    h_m = md.hash(m)
-    print(f"  H(m) = {h_m.hex()}")
+    # --- Step 1: Construct two blocks that collide under compression ---
+    # For XOR compression: compress(cv, block) = cv XOR block
+    # So compress(cv, block1) == compress(cv, block2) iff block1 == block2.
+    # To get a real collision we need a different approach:
+    # Build two MESSAGES M1, M2 that after MD padding, differ in one block
+    # but produce the same final hash.
+    #
+    # For XOR: h(cv, B) = cv ^ B. If cv1 ^ B1 == cv2 ^ B2 at ANY step,
+    # all subsequent chaining values match → full collision.
+    #
+    # Concrete construction: find M1, M2 whose padded forms differ in block 1
+    # but where the first compression step produces the same output.
+    # With IV=0: h(0, B1) = B1, h(0, B2) = B2. These only collide if B1==B2.
+    #
+    # Better: use the fact that XOR is its own inverse.
+    # h(cv, B) = cv ^ B. So for any cv:
+    #   h(cv, B) = h(cv ^ B ^ B', B')  (not useful directly)
+    #
+    # Simplest real collision for XOR: two multi-block messages where
+    # blocks are rearranged s.t. final XOR is the same.
+    # XOR is commutative, so any permutation of blocks gives the same
+    # final chaining value! (This is exactly why XOR is a bad compression.)
 
-    # Attacker knows H(m) = final CV, and knows |m|
-    # They set the new IV to H(m) and hash extra with correct pre-padding
-    padded_m = md._pad(m)
-    h_m_extended = md.hash(padded_m + extra)
-    print(f"  H(m || pad(m) || extra) via full hash = {h_m_extended.hex()}")
+    # Build two messages that, after padding, have the same blocks in
+    # different order → same hash (XOR commutativity).
+    # We construct raw padded content directly to control block order.
 
-    # Attacker's shortcut: start from H(m) as CV, feed extra with updated length
-    attacker_cv = h_m
-    fake_md = MerkleDamgard(md.compress_fn, attacker_cv, md.block_size)
-    # The attacker must adjust message length for padding: len(padded_m) + len(extra)
-    forged_padded = fake_md._pad(extra)
-    forged_cv = attacker_cv
-    for i in range(0, len(forged_padded), md.block_size):
-        block = forged_padded[i:i + md.block_size]
-        forged_cv = md.compress_fn(forged_cv, block)
-    print(f"  Attacker forged CV      = {forged_cv.hex()}")
-    print(f"  Match: {h_m_extended == forged_cv}")
+    # Two distinct blocks (besides the padding block)
+    block_A = b'\x01' * bs
+    block_B = b'\x02' * bs
+    # Padding block: will be the same for both since total length is the same
+    pad_block = struct.pack('>Q', (2 * bs) * 8).rjust(bs, b'\x80')
+    # Actually, let's just use 2-block messages with swapped blocks.
+    # M1 = blockA || blockB (raw, pre-padding)
+    # M2 = blockB || blockA
+    # After MD padding both get the same pad block appended.
+    # XOR hash: IV ^ B1 ^ B2 ^ pad == IV ^ B2 ^ B1 ^ pad (commutative!)
+
+    M1 = block_A + block_B
+    M2 = block_B + block_A
+    assert M1 != M2, "Messages must differ"
+
+    H1 = md.hash(M1)
+    H2 = md.hash(M2)
+
+    print(f"  M1 = {block_A[:4].hex()}... || {block_B[:4].hex()}...  ({len(M1)} bytes)")
+    print(f"  M2 = {block_B[:4].hex()}... || {block_A[:4].hex()}...  ({len(M2)} bytes)")
+    print(f"  M1 ≠ M2: {M1 != M2}")
+    print(f"\n  H(M1) = {H1.hex()}")
+    print(f"  H(M2) = {H2.hex()}")
+    print(f"  H(M1) == H(M2): {H1 == H2}  ← collision!")
+
+    # Trace the chaining values to show where they converge
+    print(f"\n  Chain trace for M1:")
+    padded1 = md._pad(M1)
+    cv = md.iv
+    for i in range(0, len(padded1), bs):
+        block = padded1[i:i + bs]
+        cv_next = md.compress_fn(cv, block)
+        print(f"    h({cv.hex()[:8]}..., {block.hex()[:8]}...) = {cv_next.hex()[:8]}...")
+        cv = cv_next
+
+    print(f"\n  Chain trace for M2:")
+    padded2 = md._pad(M2)
+    cv = md.iv
+    for i in range(0, len(padded2), bs):
+        block = padded2[i:i + bs]
+        cv_next = md.compress_fn(cv, block)
+        print(f"    h({cv.hex()[:8]}..., {block.hex()[:8]}...) = {cv_next.hex()[:8]}...")
+        cv = cv_next
+
+    print(f"\n  ⇒ XOR compression is commutative, so swapping blocks")
+    print(f"    preserves the final digest. A secure compression function")
+    print(f"    (like the DLP-based one in PA#8) prevents this.")
+    assert H1 == H2, "Collision propagation should succeed for XOR compression"
 
 
 if __name__ == "__main__":
@@ -138,4 +195,4 @@ if __name__ == "__main__":
     hashes = [md.hash(m).hex() for m in messages]
     print(f"\n  Distinct messages → distinct digests: {len(set(hashes)) == len(hashes)}")
 
-    demonstrate_length_extension(md)
+    demonstrate_collision_propagation(md)
