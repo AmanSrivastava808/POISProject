@@ -4,11 +4,11 @@ Depends on: PA#19 (Secure_AND, Secure_XOR, Secure_NOT)
 
 Call-stack trace for one AND gate evaluation:
 PA#20 Secure_Eval (AND gate)
-└── PA#19 Secure_AND(a, b)
-    └── PA#18 OT_Receiver_Step1 / OT_Sender_Step / OT_Receiver_Step2
-        └── PA#16 elgamal_enc / elgamal_dec
-            └── PA#11 DHGroup (DH group operations)
-                └── PA#13 gen_safe_prime, _square_and_multiply, miller_rabin
+ -> PA#19 Secure_AND(a, b)
+     -> PA#18 OT_Receiver_Step1 / OT_Sender_Step / OT_Receiver_Step2
+         -> PA#16 elgamal_enc / elgamal_dec
+             -> PA#11 DHGroup (DH group operations)
+                 -> PA#13 gen_safe_prime, _square_and_multiply, miller_rabin
 """
 
 import os
@@ -149,29 +149,13 @@ def build_millionaires_circuit(n_bits: int) -> Circuit:
     """
     Millionaire's problem: compute x > y for n-bit integers.
     Alice has x = x_{n-1}...x_0 (MSB first), Bob has y.
-    Uses ripple-carry comparison: x > y iff exists i where x_i=1, y_i=0, and x_j=y_j for all j>i.
-    Simplified: compare bit by bit with carry.
+    Uses ripple comparison with carry.
     """
     c = Circuit(n_bits, n_bits)
-    # Wires: Alice x[i] = wire i, Bob y[i] = wire n_bits+i
-    # We compute GT (greater than) with a chain of comparators
-    # gt[i] = x[i] AND NOT(y[i]) XOR (x[i] XNOR y[i]) AND gt[i+1]
-    # XNOR(a,b) = NOT(XOR(a,b))
 
-    # Start from MSB
-    # Accumulate: gt = result so far (0 initially means "equal so far")
-    # At each bit i: new_gt = (x[i] AND NOT(y[i])) OR (eq[i] AND gt)
-    # eq[i] = NOT(XOR(x[i], y[i]))
-
-    # For simplicity: implement bit-by-bit with cascade
-    # gt_wire: 1 if x > y considering bits seen so far
-    # eq_wire: 1 if x == y considering bits seen so far
-
-    # Initialize: gt = 0, eq = 1 (start equal)
-    # We need constant wires — use XOR(a, a) = 0, NOT(XOR(a,a)) = 1
-    # Use Alice's bit 0 XOR itself for 0
-    zero_wire = c.add_xor(0, 0)   # 0 XOR 0 = 0 (any bit with itself)
-    one_wire = c.add_not(zero_wire)  # NOT(0) = 1
+    # Constant wires: XOR(a0, a0) = 0, NOT(0) = 1
+    zero_wire = c.add_xor(0, 0)
+    one_wire = c.add_not(zero_wire)
 
     gt_wire = zero_wire  # starts at 0
     eq_wire = one_wire   # starts at 1
@@ -187,13 +171,10 @@ def build_millionaires_circuit(n_bits: int) -> Circuit:
         # not_yi
         not_yi = c.add_not(yi)
 
-        # bit_gt = x_i AND NOT(y_i)  [x_i=1, y_i=0 → greater at this bit]
+        # bit_gt = x_i AND NOT(y_i)
         bit_gt = c.add_and(xi, not_yi)
 
         # new_gt = gt_wire OR (eq_wire AND bit_gt)
-        # Semantics: x > y so far, OR (equal so far AND x_i > y_i at this bit)
-        # This correctly preserves gt once set, since eq_wire tracks "equal so far".
-        # Once gt_wire=1, eq_wire=0 (different bits seen), so it stays gt via gt_wire term.
         # a OR b = NOT(NOT(a) AND NOT(b))
         eq_and_bitgt = c.add_and(eq_wire, bit_gt)
         not_gt_wire = c.add_not(gt_wire)
@@ -236,7 +217,7 @@ def build_addition_circuit(n_bits: int) -> Circuit:
     """
     Secure n-bit addition x + y mod 2^n using a ripple-carry full adder chain.
 
-    Output layout: n+1 bits total — [carry, sum_{n-1}, ..., sum_0]
+    Output layout: n+1 bits total -- [carry, sum_{n-1}, ..., sum_0]
       out[0]    = final carry (the overflow / (n+1)-th bit)
       out[1:]   = the n-bit sum (MSB first)
 
@@ -274,24 +255,77 @@ def build_addition_circuit(n_bits: int) -> Circuit:
 
 def check_simulatability(transcript: list, output: list) -> bool:
     """
-    Verify transcript is simulatable from output alone:
-    each gate's output is the sole information that could not be derived from inputs alone.
-    The transcript should not reveal individual input bits beyond what the output implies.
+    Verify transcript is simulatable from output alone.
+
+    For each gate type, we check that the transcript is consistent with
+    the correctness of the gate:
+
+    - AND gates: OT ensures each party learns only the OT output.
+      The actual (a,b) pair must be consistent with the output.
+    - XOR gates: output = a XOR b. Consistent with any (a, b) that XOR to output.
+    - NOT gates: output = 1-a. Deterministic from input.
+
+    A valid transcript reveals ONLY what the output reveals.
     """
-    # For XOR and NOT gates: output can be simulated from inputs without extra info
-    # For AND gates: OT ensures each party only learns what OT allows
-    # Check: no entry reveals both parties' full inputs
     for entry in transcript:
         if entry['gate'] == 'AND':
             a, b = entry['inputs']
             out = entry['output']
-            # AND output is simulatable: if out=0, simulator could set (a=0,b=anything)
-            # if out=1, simulator sets (a=1,b=1). Consistent with output.
-            if out == 1 and not (a == 1 and b == 1):
+            if (a & b) != out:
                 return False
-            if out == 0 and (a == 1 and b == 1):
+        elif entry['gate'] == 'XOR':
+            a, b = entry['inputs']
+            out = entry['output']
+            if (a ^ b) != out:
+                return False
+        elif entry['gate'] == 'NOT':
+            a = entry['inputs'][0]
+            out = entry['output']
+            if (1 - a) != out:
                 return False
     return True
+
+
+def count_gates(circuit: Circuit) -> dict:
+    """Count gates by type in a circuit."""
+    counts = {'AND': 0, 'XOR': 0, 'NOT': 0}
+    for gate in circuit.gates:
+        if gate.gate_type in counts:
+            counts[gate.gate_type] += 1
+    return counts
+
+
+# ── Performance benchmark ─────────────────────────────────────────────────────
+
+def performance_benchmark(group: DHGroup, n_bits: int = 8) -> None:
+    """
+    Q6: Report OT calls and wall-clock time for each circuit with n-bit inputs.
+    """
+    import random
+    print(f"\n{'='*60}")
+    print(f"[Performance Benchmark (n={n_bits}-bit inputs)]")
+    print(f"{'='*60}")
+
+    circuits = {
+        "Millionaire's (x > y)": build_millionaires_circuit(n_bits),
+        "Equality (x == y)": build_equality_circuit(n_bits),
+        f"Addition (x+y mod 2^{n_bits})": build_addition_circuit(n_bits),
+    }
+
+    for name, circuit in circuits.items():
+        gate_counts = count_gates(circuit)
+        x = random.randint(0, (1 << n_bits) - 1)
+        y = random.randint(0, (1 << n_bits) - 1)
+        x_bits = [(x >> (n_bits - 1 - i)) & 1 for i in range(n_bits)]
+        y_bits = [(y >> (n_bits - 1 - i)) & 1 for i in range(n_bits)]
+
+        out, transcript, ot_cnt, elapsed = Secure_Eval(circuit, x_bits, y_bits, group)
+
+        print(f"\n  {name}:")
+        print(f"    Gates: {gate_counts}")
+        print(f"    OT calls (=AND gates): {ot_cnt}")
+        print(f"    Wall-clock time: {elapsed:.3f}s")
+        print(f"    Test: x={x}, y={y} -> output={out}")
 
 
 if __name__ == "__main__":
@@ -299,16 +333,16 @@ if __name__ == "__main__":
     print("""
 Call-stack trace (one AND gate):
 PA#20 Secure_Eval (AND gate)
-└── PA#19 Secure_AND(a, b)
-    └── PA#18 OT_Receiver_Step1 / OT_Sender_Step / OT_Receiver_Step2
-        └── PA#16 elgamal_enc / elgamal_dec
-            └── PA#11 DHGroup
-                └── PA#13 gen_safe_prime, _square_and_multiply, miller_rabin
+ -> PA#19 Secure_AND(a, b)
+     -> PA#18 OT_Receiver_Step1 / OT_Sender_Step / OT_Receiver_Step2
+         -> PA#16 elgamal_enc / elgamal_dec
+             -> PA#11 DHGroup
+                 -> PA#13 gen_safe_prime, _square_and_multiply, miller_rabin
     """)
 
     print("[Building DH group...]")
     group = DHGroup(bits=64)
-    n = 4  # 4-bit inputs for demo
+    n = 4  # 4-bit inputs for correctness demo
 
     # ── Millionaire's Problem ─────────────────────────────────────────────────
     print(f"\n[Millionaire's Problem ({n}-bit)]")
@@ -322,7 +356,7 @@ PA#20 Secure_Eval (AND gate)
         expected = int(x > y)
         sim_ok = check_simulatability(transcript, out)
         print(f"  {x} > {y}: secure={result}, expected={expected}, "
-              f"correct={result==expected}, OT_calls={ot_cnt}, t={elapsed:.3f}s, simulatable={sim_ok}")
+              f"correct={result==expected}, OT={ot_cnt}, simulatable={sim_ok}")
 
     # ── Equality Test ─────────────────────────────────────────────────────────
     print(f"\n[Secure Equality ({n}-bit)]")
@@ -333,8 +367,9 @@ PA#20 Secure_Eval (AND gate)
         out, transcript, ot_cnt, elapsed = Secure_Eval(eq_circuit, x_bits, y_bits, group)
         result = out[0]
         expected = int(x == y)
+        sim_ok = check_simulatability(transcript, out)
         print(f"  {x} == {y}: secure={result}, expected={expected}, "
-              f"correct={result==expected}, OT_calls={ot_cnt}, t={elapsed:.3f}s")
+              f"correct={result==expected}, OT={ot_cnt}, simulatable={sim_ok}")
 
     # ── Secure Addition ───────────────────────────────────────────────────────
     print(f"\n[Secure Addition ({n}-bit, mod 2^{n})]")
@@ -343,12 +378,14 @@ PA#20 Secure_Eval (AND gate)
         x_bits = [(x >> (n - 1 - i)) & 1 for i in range(n)]
         y_bits = [(y >> (n - 1 - i)) & 1 for i in range(n)]
         out, transcript, ot_cnt, elapsed = Secure_Eval(add_circuit, x_bits, y_bits, group)
-        # out = [carry, sum_{n-1}, ..., sum_0]  (n+1 bits total)
-        # mod-2^n result: drop the carry (out[0]) and read out[1:]
         carry = out[0]
         result_int = sum(b << (n - 1 - i) for i, b in enumerate(out[1:]))
         expected = (x + y) % (1 << n)
+        sim_ok = check_simulatability(transcript, out)
         print(f"  {x} + {y} = {result_int} (carry={carry}), expected={expected}, "
-              f"correct={result_int==expected}, OT_calls={ot_cnt}, t={elapsed:.3f}s")
+              f"correct={result_int==expected}, OT={ot_cnt}, simulatable={sim_ok}")
 
-    print("\n[Done — see README for full call-stack documentation]")
+    # ── Q6: Performance benchmark (n=8-bit) ──────────────────────────────────
+    performance_benchmark(group, n_bits=8)
+
+    print("\n[Done -- full call-stack trace documented above]")

@@ -39,7 +39,8 @@ class CCA_PKC:
         # Encrypt
         c1, c2 = elgamal_enc(pk_enc, m)
         # Sign the ciphertext (c1 || c2 serialized)
-        ct_bytes = c1.to_bytes(64, 'big') + c2.to_bytes(64, 'big')
+        p_bytes = (self.elgamal_kp.group.p.bit_length() + 7) // 8
+        ct_bytes = c1.to_bytes(p_bytes, 'big') + c2.to_bytes(p_bytes, 'big')
         sigma = self.sig.Sign(sk_sign, ct_bytes)
         return c1, c2, sigma
 
@@ -48,7 +49,8 @@ class CCA_PKC:
         Verify signature first, return ⊥ on failure. Then decrypt.
         """
         # Verify signature
-        ct_bytes = c1.to_bytes(64, 'big') + c2.to_bytes(64, 'big')
+        p_bytes = (self.elgamal_kp.group.p.bit_length() + 7) // 8
+        ct_bytes = c1.to_bytes(p_bytes, 'big') + c2.to_bytes(p_bytes, 'big')
         if not self.sig.Verify(vk_sign, ct_bytes, sigma):
             return BOTTOM  # ⊥
         # Decrypt

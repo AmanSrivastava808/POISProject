@@ -83,7 +83,6 @@ class Eve_MITM:
 
     def intercept_alice(self, A: int) -> int:
         """Intercept Alice's public key, compute key with Alice, return g^e to Bob."""
-        self.key_with_alice = group.power(A, self.e) if hasattr(self, 'group') else None
         self.key_with_alice = self.group.power(A, self.e)
         return self.E  # send Eve's key to Bob
 
@@ -95,25 +94,52 @@ class Eve_MITM:
 
 # ── CDH Hardness Demo ─────────────────────────────────────────────────────────
 
-def demo_cdh_hardness(group: DHGroup, a: int, A: int, B: int) -> None:
+def demo_cdh_hardness(bits: int = 22) -> None:
     """
-    Demonstrate CDH hardness at small parameters by timing brute-force.
+    Demonstrate CDH hardness: given g^a and g^b, compute g^{ab}
+    WITHOUT knowing a or b. For small q ~ 2^20 we brute-force the
+    discrete log to recover a, then compute g^{ab} = (g^b)^a.
+    This shows computing CDH requires solving DLP (brute-force O(q)).
     """
     import time
-    print("\n[CDH Hardness Demo — brute-force for small parameters]")
-    print(f"  Trying to find a such that g^a = A (mod p), p is {group.p.bit_length()}-bit")
+
+    print(f"\n[CDH Hardness Demo -- brute-force with q ~ 2^{bits-2}]")
+    small_group = DHGroup(bits=bits)
+    g, p, q = small_group.g, small_group.p, small_group.q
+
+    # Alice and Bob do honest DH
+    a, A = dh_alice_step1(small_group)
+    b, B = dh_bob_step1(small_group)
+    real_K = dh_alice_step2(small_group, a, B)  # g^{ab} -- the target
+
+    print(f"  p = {p} ({p.bit_length()}-bit)")
+    print(f"  q = {q} ({q.bit_length()}-bit)")
+    print(f"  g^a = {A}")
+    print(f"  g^b = {B}")
+    print(f"  Goal: compute g^{{ab}} from g^a and g^b alone")
+
+    # Brute-force: try all x in [0, q) until g^x == A, then K = B^x
     t0 = time.time()
-    found = None
-    for candidate in range(min(100000, group.q)):
-        if _square_and_multiply(group.g, candidate, group.p) == A:
-            found = candidate
+    found_a = None
+    for x in range(q):
+        if _square_and_multiply(g, x, p) == A:
+            found_a = x
             break
     elapsed = time.time() - t0
-    if found is not None:
-        print(f"  Found a={found} in {elapsed:.3f}s (small parameters, brute-force works)")
-        print(f"  For real parameters (2048-bit), this is computationally infeasible")
+
+    if found_a is not None:
+        K_brute = _square_and_multiply(B, found_a, p)
+        print(f"\n  Brute-force found a = {found_a} in {elapsed:.3f}s ({q} candidates)")
+        print(f"  Computed g^{{ab}} = B^a = {K_brute}")
+        print(f"  Real g^{{ab}}          = {real_K}")
+        print(f"  Match: {K_brute == real_K}")
+        assert K_brute == real_K
     else:
-        print(f"  Not found in 100k attempts ({elapsed:.3f}s) — brute-force fails!")
+        print(f"  Could not find a in {elapsed:.3f}s (unexpected)")
+
+    print(f"\n  For real parameters (2048-bit), q ~ 2^2048.")
+    print(f"  Brute-force O(q) is completely infeasible.")
+    print(f"  CDH security underlies all DH-based key exchange.")
 
 
 if __name__ == "__main__":
@@ -121,7 +147,7 @@ if __name__ == "__main__":
 
     group = DHGroup(bits=64)
 
-    # Honest DH
+    # Q2: Honest DH exchange
     print("\n[Honest DH exchange]")
     a, A = dh_alice_step1(group)
     b, B = dh_bob_step1(group)
@@ -132,8 +158,9 @@ if __name__ == "__main__":
     print(f"  K_Alice = {str(KA)[:20]}...")
     print(f"  K_Bob   = {str(KB)[:20]}...")
     print(f"  Keys match: {KA == KB}")
+    assert KA == KB, "Shared keys must match!"
 
-    # MITM
+    # Q3: MITM attack
     print("\n[Eve's MITM attack]")
     eve = Eve_MITM(group)
     a2, A2 = dh_alice_step1(group)
@@ -143,13 +170,17 @@ if __name__ == "__main__":
     A_to_bob = eve.intercept_alice(A2)   # Eve sends E to Bob instead
     B_to_alice = eve.intercept_bob(B2)   # Eve sends E to Alice instead
 
-    # Alice and Bob compute keys with Eve
-    KA_mitm = dh_alice_step2(group, a2, B_to_alice)  # actually g^ae
-    KB_mitm = dh_bob_step2(group, b2, A_to_bob)       # actually g^be
+    # Alice and Bob compute keys with Eve (not with each other!)
+    KA_mitm = dh_alice_step2(group, a2, B_to_alice)  # K_A = (g^e)^a = g^{ae}
+    KB_mitm = dh_bob_step2(group, b2, A_to_bob)       # K_B = (g^e)^b = g^{be}
+    print(f"  Eve's secret exponent e (hidden):  [withheld]")
     print(f"  Eve knows key with Alice: {str(eve.key_with_alice)[:20]}...")
     print(f"  Eve knows key with Bob:   {str(eve.key_with_bob)[:20]}...")
     print(f"  Alice's key == Eve-Alice key: {KA_mitm == eve.key_with_alice}")
     print(f"  Bob's key == Eve-Bob key:     {KB_mitm == eve.key_with_bob}")
-    print(f"  Eve can decrypt/re-encrypt all traffic!")
+    print(f"  Alice and Bob think they share a key, but Eve has both!")
+    print(f"  Eve can decrypt, read, re-encrypt, and relay all traffic.")
 
-    demo_cdh_hardness(group, a, A, B)
+    # Q4: CDH hardness demo (small parameters, q ~ 2^20)
+    demo_cdh_hardness(bits=22)
+

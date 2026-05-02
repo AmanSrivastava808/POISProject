@@ -29,7 +29,11 @@ class RSA_Signature:
     def _hash_to_int(self, m: bytes) -> int:
         """Hash message and convert to integer, reduced mod n."""
         h = self.H.hash(m)
-        return int.from_bytes(h, 'big') % self.kp.n
+        h_int = int.from_bytes(h, 'big') % self.kp.n
+        # Ensure non-zero (0^d = 0 is trivially forgeable)
+        if h_int == 0:
+            h_int = 1
+        return h_int
 
     def Sign(self, sk: tuple, m: bytes) -> int:
         """Sign message m. Returns signature sigma = H(m)^d mod n."""
@@ -39,22 +43,25 @@ class RSA_Signature:
         return sigma
 
     def Verify(self, pk: tuple, m: bytes, sigma: int) -> bool:
-        """Verify signature. Returns True iff sigma^e ≡ H(m) (mod n)."""
+        """Verify signature. Returns True iff sigma^e = H(m) (mod n)."""
         n, e = pk
         recovered = _square_and_multiply(sigma, e, n)
         h_int = self._hash_to_int(m)
         return recovered == h_int
 
 
-# ── Multiplicative Homomorphism Forgery (raw RSA without hashing) ─────────────
+# ── Hash-then-Sign Argument ───────────────────────────────────────────────────
 
-def demo_multiplicative_forgery(kp: RSA_KeyPair) -> None:
+def demo_multiplicative_forgery(kp: RSA_KeyPair, sig: RSA_Signature) -> None:
     """
-    Raw RSA signing (no hash) is vulnerable to multiplicative forgery.
-    If we have sigma_1 = m1^d and sigma_2 = m2^d,
-    then sigma_1 * sigma_2 ≡ (m1 * m2)^d (mod n).
+    Demonstrate:
+    Part 1: Raw RSA signing (no hash) is vulnerable to multiplicative forgery.
+    Part 2: Hash-then-Sign defeats the same attack.
     """
-    print("\n[Raw RSA Forgery (no hash)]")
+    print("\n[Hash-then-Sign: why hashing is necessary]")
+
+    # --- Part 1: Raw RSA signing (NO hash) -> forgery SUCCEEDS ---
+    print("\n  Part 1: Raw RSA signing (no hash)")
 
     def raw_sign(m_int: int) -> int:
         return _square_and_multiply(m_int, kp.d, kp.n)
@@ -73,9 +80,39 @@ def demo_multiplicative_forgery(kp: RSA_KeyPair) -> None:
     sigma_forged = (sigma_1 * sigma_2) % kp.n
 
     valid = raw_verify(m_forged, sigma_forged)
-    print(f"  Sign({m1}) and Sign({m2}) obtained from oracle")
-    print(f"  Forged signature for {m_forged} = {m1}*{m2}: valid = {valid}")
-    print(f"  Hashing prevents this: H(m1)*H(m2) ≠ H(m1*m2) in general")
+    print(f"    sigma_1 = Sign_raw({m1}), sigma_2 = Sign_raw({m2})")
+    print(f"    Forged sig for {m_forged} = sigma_1 * sigma_2 mod N")
+    print(f"    Raw verify({m_forged}, forged_sig) = {valid}  <- FORGERY SUCCEEDS!")
+    assert valid, "Raw forgery should succeed"
+
+    # --- Part 2: Hash-then-Sign -> same attack FAILS ---
+    print("\n  Part 2: Hash-then-Sign (with DLP hash)")
+    pk = kp.public_key
+    sk = kp.private_key
+
+    m1_bytes = m1.to_bytes(8, 'big')
+    m2_bytes = m2.to_bytes(8, 'big')
+    m_product_bytes = m_forged.to_bytes(8, 'big')
+
+    sigma_h1 = sig.Sign(sk, m1_bytes)
+    sigma_h2 = sig.Sign(sk, m2_bytes)
+
+    # Adversary tries same trick: sigma_forged = sigma_h1 * sigma_h2
+    sigma_h_forged = (sigma_h1 * sigma_h2) % kp.n
+
+    # Verify on m1*m2
+    valid_hashed = sig.Verify(pk, m_product_bytes, sigma_h_forged)
+    print(f"    sigma_h1 = Sign(H({m1})), sigma_h2 = Sign(H({m2}))")
+    print(f"    Forged sig = sigma_h1 * sigma_h2 mod N")
+    print(f"    Verify(H({m_forged}), forged) = {valid_hashed}  <- FORGERY FAILS!")
+
+    # Explain why
+    h_m1 = sig._hash_to_int(m1_bytes)
+    h_m2 = sig._hash_to_int(m2_bytes)
+    h_product = sig._hash_to_int(m_product_bytes)
+    print(f"\n    Why: H(m1)*H(m2) mod N = {(h_m1 * h_m2) % kp.n}")
+    print(f"         H(m1*m2)          = {h_product}")
+    print(f"         Equal? {(h_m1 * h_m2) % kp.n == h_product}  <- Hash is NOT homomorphic!")
 
 
 # ── EUF-CMA Game ──────────────────────────────────────────────────────────────
@@ -112,24 +149,26 @@ if __name__ == "__main__":
     dlp = DLP_Hash(bits=32)
     sig = RSA_Signature(kp, dlp)
 
-    # Sign/verify
+    # Q1: Sign/verify
     print("\n[Sign and Verify]")
     pk = kp.public_key
     sk = kp.private_key
     for m in [b"Hello", b"Sign this message", b"A" * 100]:
         sigma = sig.Sign(sk, m)
         v = sig.Verify(pk, m, sigma)
-        # Tamper
+        # Tamper with signature
         sigma_bad = (sigma + 1) % kp.n
         v_bad = sig.Verify(pk, m, sigma_bad)
-        print(f"  Sign({m[:20]!r}): verify={v}, tampered_verify={v_bad}")
+        print(f"  Sign({m[:20]!r}): verify={v}, tampered={v_bad}")
 
-    # Wrong message
+    # Tamper with message
     sigma_test = sig.Sign(sk, b"message A")
     v_wrong = sig.Verify(pk, b"message B", sigma_test)
-    print(f"\n  Sign(A), Verify(B): {v_wrong} (expected False)")
+    print(f"\n  Sign('message A'), Verify('message B'): {v_wrong} (expected False)")
 
-    demo_multiplicative_forgery(kp)
+    # Q2: Hash-then-sign argument
+    demo_multiplicative_forgery(kp, sig)
 
+    # Q3: EUF-CMA game
     result = euf_cma_signature(sig, pk, sk, queries=50)
     print(f"\n[EUF-CMA game] {result}")

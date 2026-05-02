@@ -68,17 +68,20 @@ def is_prime(n: int) -> bool:
 def gen_prime(bits: int) -> int:
     """
     Generate a probable prime of exactly `bits` bits.
-    Loops until a candidate passes 40 Miller-Rabin rounds.
+    Loops until a candidate passes 40 Miller-Rabin rounds,
+    then sanity-checks with 100 rounds.
     """
-    count = 0
     while True:
         # Generate random odd number with top bit set
-        candidate = int.from_bytes(os.urandom(bits // 8), 'big')
-        # Force top bit and bottom bit
+        byte_len = (bits + 7) // 8
+        candidate = int.from_bytes(os.urandom(byte_len), 'big')
+        # Mask to exact bit count, then force top bit and bottom bit
+        candidate &= (1 << bits) - 1
         candidate |= (1 << (bits - 1))  # set MSB
         candidate |= 1                   # make odd
-        count += 1
         if miller_rabin(candidate, k=40):
+            # Sanity check with 100 rounds as spec requires
+            assert miller_rabin(candidate, k=100), "Sanity check failed!"
             return candidate
 
 
@@ -95,15 +98,24 @@ def gen_safe_prime(bits: int) -> tuple[int, int]:
 
 
 def benchmark_prime_generation(bit_sizes: list[int], trials: int = 3) -> None:
-    """Benchmark prime generation: log candidates-before-prime for each bit size."""
+    """
+    Benchmark prime generation: report average candidates-before-prime
+    and compare to the theoretical O(ln n) prediction from PNT.
+    """
+    import math
     print("\n=== Prime Generation Benchmark ===")
+    print(f"  PNT prediction: ~b*ln(2)/2 odd candidates for a b-bit prime")
+    print(f"  (density of primes near N is 1/ln(N); testing only odds halves it)\n")
+
     for bits in bit_sizes:
         times = []
         for _ in range(trials):
             count = 0
             t0 = time.time()
             while True:
-                candidate = int.from_bytes(os.urandom(bits // 8), 'big')
+                byte_len = (bits + 7) // 8
+                candidate = int.from_bytes(os.urandom(byte_len), 'big')
+                candidate &= (1 << bits) - 1
                 candidate |= (1 << (bits - 1))
                 candidate |= 1
                 count += 1
@@ -113,24 +125,60 @@ def benchmark_prime_generation(bit_sizes: list[int], trials: int = 3) -> None:
             times.append((count, elapsed))
         avg_count = sum(t[0] for t in times) / trials
         avg_time = sum(t[1] for t in times) / trials
-        print(f"  {bits}-bit prime: avg {avg_count:.1f} candidates, {avg_time:.3f}s")
+        theoretical = bits * math.log(2) / 2  # PNT: ln(2^b) / 2 for odd candidates
+        print(f"  {bits:>5}-bit: avg {avg_count:>6.1f} candidates, "
+              f"theory {theoretical:>6.1f} (ratio {avg_count/theoretical:.2f}), "
+              f"{avg_time:.3f}s")
+
+
+def naive_fermat_test(n: int, k: int = 20) -> bool:
+    """
+    Naive Fermat primality test: check a^{n-1} = 1 (mod n) for random a.
+    Carmichael numbers fool this test (for witnesses coprime to n).
+    """
+    import math
+    if n < 2:
+        return False
+    if n < 4:
+        return True
+    for _ in range(k):
+        a = 2 + int.from_bytes(os.urandom(4), 'big') % (n - 3)
+        # Skip witnesses that share a factor with n (real Fermat tests do this)
+        if math.gcd(a, n) != 1:
+            continue
+        if _square_and_multiply(a, n - 1, n) != 1:
+            return False
+    return True  # Fermat says "probably prime"
 
 
 def demonstrate_carmichael():
-    """Demonstrate that 561 (Carmichael number) is correctly identified as composite."""
-    n = 561  # = 3 * 11 * 17 — a Carmichael number (passes Fermat but fails Miller-Rabin)
-    result = miller_rabin(n, k=40)
+    """
+    Demonstrate that 561 (smallest Carmichael number) passes naive Fermat
+    but is correctly rejected by Miller-Rabin.
+    """
+    n = 561  # = 3 * 11 * 17
     print(f"\n=== Carmichael Number Demo ===")
-    print(f"  561 = 3 × 11 × 17 (Carmichael number)")
-    print(f"  miller_rabin(561, k=40) = {result}  (expected: False)")
-    assert not result, "Miller-Rabin should detect 561 as composite!"
+    print(f"  561 = 3 x 11 x 17 (smallest Carmichael number)")
+    print(f"  Carmichael numbers satisfy a^(n-1) = 1 mod n for all gcd(a,n)=1")
+    print(f"  This fools the Fermat test but NOT Miller-Rabin.\n")
 
-    # Other Carmichael numbers
+    # Fermat test: 561 passes (WRONG answer)
+    fermat_result = naive_fermat_test(n, k=20)
+    print(f"  naive_fermat_test(561, k=20) = {fermat_result}  (WRONG: says prime!)")
+
+    # Miller-Rabin: 561 fails (CORRECT answer)
+    mr_result = miller_rabin(n, k=40)
+    print(f"  miller_rabin(561, k=40)      = {mr_result}  (CORRECT: composite)")
+    assert not mr_result, "Miller-Rabin should detect 561 as composite!"
+
+    # Test more Carmichael numbers
     carmichaels = [1105, 1729, 2465, 2821, 6601]
+    print(f"\n  Other Carmichael numbers:")
     for c in carmichaels:
-        r = miller_rabin(c, k=40)
-        print(f"  miller_rabin({c}) = {r}  (expected: False)")
-        assert not r
+        f = naive_fermat_test(c, k=20)
+        m = miller_rabin(c, k=40)
+        print(f"    {c}: Fermat={f} (wrong), Miller-Rabin={m} (correct)")
+        assert not m
 
 
 if __name__ == "__main__":
