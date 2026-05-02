@@ -40,8 +40,8 @@ def birthday_attack(dlp: DLP_Hash, n_bits: int, max_attempts: int = None) -> tup
 
     seen: dict[int, bytes] = {}
     for i in range(max_attempts):
-        # Use 8-byte messages so we have a large enough input space
-        m = i.to_bytes(8, 'big')
+        # Use random 8-byte messages so each trial is independent
+        m = os.urandom(8)
         h = dlp.hash(m)
         h_int = int.from_bytes(h[-trunc_bytes:], 'big') & mask
         if h_int in seen and seen[h_int] != m:
@@ -49,6 +49,70 @@ def birthday_attack(dlp: DLP_Hash, n_bits: int, max_attempts: int = None) -> tup
         seen[h_int] = m
 
     return None, None, max_attempts
+
+
+# ── Floyd’s cycle-finding birthday attack ──────────────────────────────────
+
+def birthday_attack_floyd(dlp: DLP_Hash, n_bits: int) -> tuple:
+    """
+    Floyd's tortoise-and-hare cycle-finding birthday attack.
+    Time: O(2^{n/2}), Space: O(1).
+
+    Treats f(x) = Trunc_n(H(x)) as an iterated map on {0,1}^n.
+    Phase 1: find cycle (tortoise/hare meet).
+    Phase 2: find the exact collision pair.
+
+    Returns (m1, m2, evaluations) where Trunc(H(m1)) == Trunc(H(m2)).
+    """
+    trunc_bytes = (n_bits + 7) // 8
+    mask = (1 << n_bits) - 1
+    evaluations = 0
+
+    def trunc_hash(x_int: int) -> int:
+        """Truncated hash: int -> int."""
+        nonlocal evaluations
+        evaluations += 1
+        m = x_int.to_bytes(max(trunc_bytes, 8), 'big')
+        h = dlp.hash(m)
+        return int.from_bytes(h[-trunc_bytes:], 'big') & mask
+
+    # Phase 1: Tortoise and Hare detect cycle
+    # Start from a random-ish point
+    x0 = int.from_bytes(os.urandom(trunc_bytes), 'big') & mask
+    tortoise = trunc_hash(x0)
+    hare = trunc_hash(trunc_hash(x0))
+
+    budget = 10 * (1 << ((n_bits + 1) // 2))
+    steps = 0
+    while tortoise != hare and steps < budget:
+        tortoise = trunc_hash(tortoise)
+        hare = trunc_hash(trunc_hash(hare))
+        steps += 1
+
+    if tortoise != hare:
+        return None, None, evaluations  # exceeded budget
+
+    # Phase 2: Find the collision pair
+    # Move one pointer back to start, advance both one step at a time
+    ptr1 = x0
+    ptr2 = tortoise
+    while trunc_hash(ptr1) != trunc_hash(ptr2):
+        ptr1 = trunc_hash(ptr1)
+        ptr2 = trunc_hash(ptr2)
+
+    # ptr1 and ptr2 are the two distinct inputs that map to the same output
+    m1 = ptr1.to_bytes(max(trunc_bytes, 8), 'big')
+    m2 = ptr2.to_bytes(max(trunc_bytes, 8), 'big')
+
+    # Verify they actually collide
+    h1 = int.from_bytes(dlp.hash(m1)[-trunc_bytes:], 'big') & mask
+    h2 = int.from_bytes(dlp.hash(m2)[-trunc_bytes:], 'big') & mask
+
+    if h1 == h2 and m1 != m2:
+        return m1, m2, evaluations
+    else:
+        # Edge case: cycle found but not a useful collision
+        return None, None, evaluations
 
 
 def run_trials(dlp: DLP_Hash, n_bits: int, num_trials: int = 20) -> dict:
@@ -175,19 +239,19 @@ def demo_single_collision(dlp: DLP_Hash, n_bits: int = 16) -> None:
     print(f"  Full hashes differ: {h1 != h2}  (CRHF is secure on full output)")
 
 
-# ── Sweep across output sizes ─────────────────────────────────────────────────
+# ── Sweep across output sizes ─────────────────────────────────────────────
 
-def sweep_birthday_bound(dlp: DLP_Hash, bit_sizes: list[int], trials_per_size: int = 15) -> None:
+def sweep_birthday_bound(dlp: DLP_Hash, bit_sizes: list[int], trials_per_size: int = 100) -> None:
     """
     Sweep across multiple truncation sizes and verify that the empirical
-    mean tracks the theoretical birthday bound with ratio ≈ 1.0.
+    mean tracks the theoretical birthday bound with ratio ~ 1.0.
     """
-    print(f"\n[Birthday bound sweep — {trials_per_size} trials per size]")
-    print(f"  Theoretical constant sqrt(π/2) ≈ {math.sqrt(math.pi/2):.4f}\n")
+    print(f"\n[Birthday bound sweep -- {trials_per_size} trials per size]")
+    print(f"  Theoretical constant sqrt(pi/2) ~ {math.sqrt(math.pi/2):.4f}\n")
 
     header = f"  {'bits':>4}  {'2^n':>8}  {'E[theory]':>10}  {'E[empiric]':>10}  {'ratio':>7}  {'success':>7}"
     print(header)
-    print("  " + "─" * (len(header) - 2))
+    print("  " + "-" * (len(header) - 2))
 
     results = []
     for n in bit_sizes:
@@ -204,11 +268,47 @@ def sweep_birthday_bound(dlp: DLP_Hash, bit_sizes: list[int], trials_per_size: i
 
     ascii_chart(results)
 
-    # Sanity check: ratios should be O(1) — not growing with n
+    # Sanity check: ratios should be O(1) -- not growing with n
     ratios = [r['ratio'] for r in results]
     ratio_spread = max(ratios) - min(ratios)
+    ok = ratio_spread < 1.0
     print(f"\n  Ratio spread (max - min): {ratio_spread:.3f}  "
-          f"{'✓ O(1) confirmed' if ratio_spread < 1.0 else '✗ unexpected growth'}")
+          f"{'OK: O(1) confirmed' if ok else 'WARN: unexpected growth'}")
+
+
+# ── MD5/SHA-1 scale analysis ─────────────────────────────────────────────
+
+def md5_sha1_scale_analysis() -> None:
+    """
+    Compute 2^{n/2} for MD5 (n=128) and SHA-1 (n=160).
+    Express the result in terms of modern CPU speed (10^9 hashes/sec)
+    to contextualise why MD5 is broken and SHA-1 is deprecated.
+    """
+    print("\n[Scale Analysis: MD5 and SHA-1 birthday bounds]")
+    evals_per_sec = 1e9  # modern CPU: ~10^9 hash evaluations/sec
+    secs_per_year = 365.25 * 24 * 3600
+
+    for name, bits in [('MD5', 128), ('SHA-1', 160), ('SHA-256', 256)]:
+        half = bits // 2
+        work = 2 ** half
+        seconds = work / evals_per_sec
+        years = seconds / secs_per_year
+
+        if years < 1:
+            time_str = f"{seconds:.2e} seconds"
+        elif years < 1e6:
+            time_str = f"{years:.2e} years"
+        else:
+            time_str = f"{years:.2e} years"
+
+        print(f"\n  {name} ({bits}-bit output):")
+        print(f"    Birthday bound: 2^{half} = {work:.2e} evaluations")
+        print(f"    At 10^9 hashes/sec: {time_str}")
+
+    print(f"\n  Takeaway:")
+    print(f"    MD5  (2^64):  feasible in hours on a GPU cluster -- BROKEN")
+    print(f"    SHA-1 (2^80): feasible with ~$100K compute -- DEPRECATED (SHAttered, 2017)")
+    print(f"    SHA-256 (2^128): infeasible for the foreseeable future")
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -216,18 +316,35 @@ def sweep_birthday_bound(dlp: DLP_Hash, bit_sizes: list[int], trials_per_size: i
 if __name__ == "__main__":
     print("=== PA#9: Birthday Attack ===\n")
 
-    # One DLP_Hash instance reused throughout — safe-prime generation is slow.
+    # One DLP_Hash instance reused throughout -- safe-prime generation is slow.
     # 32-bit full output; we truncate internally to various sizes.
     dlp = DLP_Hash(bits=32)
 
     # 1. Formal argument
     print(birthday_paradox_argument())
 
-    # 2. Single concrete collision at 16-bit truncation
+    # 2. Single concrete collision at 16-bit truncation (naive)
     demo_single_collision(dlp, n_bits=16)
 
-    # 3. Sweep: 8, 12, 16, 20 bits
-    #    20-bit kept manageable: 2^10 = 1024 expected evaluations per trial
-    sweep_birthday_bound(dlp, bit_sizes=[8, 12, 16, 20], trials_per_size=15)
+    # 3. Floyd's cycle-finding attack demo
+    print("\n[Floyd's cycle-finding birthday attack (n=16)]")
+    m1, m2, evals = birthday_attack_floyd(dlp, n_bits=16)
+    if m1 is not None:
+        trunc_bytes = 2
+        mask = 0xFFFF
+        t1 = int.from_bytes(dlp.hash(m1)[-trunc_bytes:], 'big') & mask
+        t2 = int.from_bytes(dlp.hash(m2)[-trunc_bytes:], 'big') & mask
+        print(f"  Collision found in {evals} evaluations (O(1) space)")
+        print(f"  m1 = {m1.hex()}, m2 = {m2.hex()}")
+        print(f"  Trunc16(H(m1)) = {t1:#06x}, Trunc16(H(m2)) = {t2:#06x}")
+        print(f"  Match: {t1 == t2}")
+    else:
+        print(f"  No collision found in {evals} evals (Floyd can miss if cycle structure is unfavourable)")
+
+    # 4. Empirical birthday curve: n in {8, 10, 12, 14, 16}, 100 trials each
+    sweep_birthday_bound(dlp, bit_sizes=[8, 10, 12, 14, 16], trials_per_size=100)
+
+    # 5. MD5/SHA-1 scale analysis
+    md5_sha1_scale_analysis()
 
     print("\n=== Done ===")
