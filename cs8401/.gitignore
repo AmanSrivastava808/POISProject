@@ -23,6 +23,7 @@ htmlcov/
 webapp/node_modules/
 webapp/dist/
 webapp/.vite/
+package-lock.json
 
 # Editor / OS
 .DS_Store
