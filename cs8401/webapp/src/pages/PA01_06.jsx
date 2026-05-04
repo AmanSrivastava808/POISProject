@@ -1,16 +1,41 @@
 import { useState, useEffect, useCallback } from "react";
 import { apiFetch } from "../api";
 
-// ── PA#1: OWF & PRG (Live viewer with slider) ───────────────────────────────
+// ── Shared helpers ────────────────────────────────────────────────────────────
+function Field({ label, value, mono = true, accent }) {
+  return (
+    <div style={{ marginBottom: "0.5rem" }}>
+      <div style={{ fontSize: "0.68rem", color: "var(--text-muted)", marginBottom: 2 }}>{label}</div>
+      <div style={{
+        fontFamily: mono ? "'JetBrains Mono', monospace" : "inherit",
+        fontSize: "0.8rem", color: accent || "var(--accent-cyan)",
+        background: "var(--bg-input)", padding: "0.4rem 0.6rem",
+        borderRadius: 6, border: "1px solid var(--border)", wordBreak: "break-all"
+      }}>{String(value)}</div>
+    </div>
+  );
+}
+
+function StatusBadge({ ok, trueLabel, falseLabel }) {
+  return (
+    <span className={`badge ${ok ? "badge-success" : "badge-error"}`}>
+      {ok ? trueLabel : falseLabel}
+    </span>
+  );
+}
+
+// ── PA#1: OWF & PRG ──────────────────────────────────────────────────────────
 export function PA01() {
   const [seed, setSeed] = useState("deadbeefcafebabe");
+  const [owfInput, setOwfInput] = useState("deadbeefcafebabe");
   const [outputBits, setOutputBits] = useState(128);
   const [prg, setPrg] = useState(null);
+  const [owf, setOwf] = useState(null);
   const [nist, setNist] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [owfLoading, setOwfLoading] = useState(false);
   const [nistLoading, setNistLoading] = useState(false);
 
-  // Auto-fetch PRG output when seed or slider changes
   const fetchPrg = useCallback(async () => {
     if (!seed) return;
     setLoading(true);
@@ -24,6 +49,14 @@ export function PA01() {
     const t = setTimeout(fetchPrg, 300);
     return () => clearTimeout(t);
   }, [fetchPrg]);
+
+  const runOwf = async () => {
+    if (!owfInput) return;
+    setOwfLoading(true);
+    const r = await apiFetch("/pa01/owf", { input_hex: owfInput });
+    setOwf(r);
+    setOwfLoading(false);
+  };
 
   const runNist = async () => {
     setNistLoading(true);
@@ -41,6 +74,30 @@ export function PA01() {
       <p>DLP-based OWF with Goldreich-Levin hard-core bit PRG. Slide to expand.</p>
     </div>
 
+    {/* OWF Section */}
+    <div className="card">
+      <h3>🔐 One-Way Function f(x) = g^x mod p</h3>
+      <div className="input-group">
+        <label>Input x (hex)</label>
+        <input value={owfInput} onChange={e => setOwfInput(e.target.value)} placeholder="e.g. deadbeefcafebabe" />
+      </div>
+      <button className="btn btn-primary" onClick={runOwf} disabled={owfLoading}>
+        {owfLoading ? <span className="spinner"/> : "Evaluate OWF"}
+      </button>
+      {owf && !owf.error && (
+        <div className="fade-in" style={{ marginTop: "0.75rem" }}>
+          <Field label="Input x (integer)" value={owf.input} />
+          <Field label="Output f(x) = g^x mod p" value={owf.output} accent="var(--accent-green)" />
+          <Field label="One-way property" value={owf.note} mono={false} accent="var(--text-secondary)" />
+          <div className="result-row">
+            <StatusBadge ok={owf.one_way} trueLabel="✓ One-Way" falseLabel="✗ Not One-Way" />
+          </div>
+        </div>
+      )}
+      {owf?.error && <div className="output-box fade-in"><pre style={{color:"var(--accent-red)"}}>{owf.error}</pre></div>}
+    </div>
+
+    {/* PRG Section */}
     <div className="card">
       <h3>🔑 Seed Input</h3>
       <div className="input-group">
@@ -63,6 +120,7 @@ export function PA01() {
       <h3>📡 Live PRG Output G(s) {loading && <span className="spinner" style={{marginLeft:6}}/>}</h3>
       {prg?.output_hex && (
         <div className="fade-in">
+          <div style={{ fontSize: "0.68rem", color: "var(--text-muted)", marginBottom: 4 }}>Output hex (seed={prg.seed})</div>
           <div style={{
             fontFamily: "'JetBrains Mono', monospace", fontSize: '0.72rem',
             background: 'var(--bg-input)', borderRadius: 8, padding: '0.75rem',
@@ -153,8 +211,6 @@ export function PA02() {
   };
 
   const depth = queryBits.length;
-
-  // SVG tree layout
   const nodeR = 28;
   const levelH = 70;
   const svgW = Math.max(600, (2 ** depth) * 70);
@@ -221,20 +277,17 @@ export function PA02() {
       <h3>🌳 GGM Binary Tree (depth {depth}) {loading && <span className="spinner" style={{marginLeft:6}}/>}</h3>
       {tree?.tree && (
         <svg width={svgW} height={svgH} style={{ display: 'block', margin: '0 auto' }}>
-          {/* Edges */}
           {tree.tree.filter(n => n.level > 0).map(node => {
             const parentId = node.id.slice(0, -1);
             const parentLvl = node.level - 1;
             const p = getNodePos(parentId || '0', parentLvl);
             const c = getNodePos(node.id, node.level);
-            const onPath = node.on_path;
             return (
               <line key={`e_${node.id}`} x1={p.x} y1={p.y + nodeR} x2={c.x} y2={c.y - nodeR}
-                stroke={onPath ? '#3b82f6' : '#2a3040'} strokeWidth={onPath ? 2.5 : 1}
-                opacity={onPath ? 1 : 0.4} />
+                stroke={node.on_path ? '#3b82f6' : '#2a3040'} strokeWidth={node.on_path ? 2.5 : 1}
+                opacity={node.on_path ? 1 : 0.4} />
             );
           })}
-          {/* Edge labels (0/1) */}
           {tree.tree.filter(n => n.level > 0).map(node => {
             const parentId = node.id.slice(0, -1);
             const parentLvl = node.level - 1;
@@ -250,24 +303,21 @@ export function PA02() {
               </text>
             );
           })}
-          {/* Nodes */}
           {tree.tree.map(node => {
             const pos = getNodePos(node.id || '0', node.level);
-            const onPath = node.on_path;
-            const isLeaf = node.is_leaf;
             return (
               <g key={`n_${node.id || 'root'}`}>
                 <circle cx={pos.x} cy={pos.y} r={nodeR}
-                  fill={onPath ? (isLeaf ? 'rgba(6,182,212,0.25)' : 'rgba(59,130,246,0.2)') : 'rgba(42,48,64,0.5)'}
-                  stroke={onPath ? (isLeaf ? '#06b6d4' : '#3b82f6') : '#2a3040'}
-                  strokeWidth={onPath ? 2 : 1} />
+                  fill={node.on_path ? (node.is_leaf ? 'rgba(6,182,212,0.25)' : 'rgba(59,130,246,0.2)') : 'rgba(42,48,64,0.5)'}
+                  stroke={node.on_path ? (node.is_leaf ? '#06b6d4' : '#3b82f6') : '#2a3040'}
+                  strokeWidth={node.on_path ? 2 : 1} />
                 <text x={pos.x} y={pos.y - 4} textAnchor="middle"
-                  fill={onPath ? '#e2e8f0' : '#64748b'} fontSize={9}
-                  fontFamily="JetBrains Mono, monospace" fontWeight={onPath ? 600 : 400}>
+                  fill={node.on_path ? '#e2e8f0' : '#64748b'} fontSize={9}
+                  fontFamily="JetBrains Mono, monospace" fontWeight={node.on_path ? 600 : 400}>
                   {node.label}
                 </text>
                 <text x={pos.x} y={pos.y + 10} textAnchor="middle"
-                  fill={onPath ? '#06b6d4' : '#475569'} fontSize={7.5}
+                  fill={node.on_path ? '#06b6d4' : '#475569'} fontSize={7.5}
                   fontFamily="JetBrains Mono, monospace">
                   {node.hex}
                 </text>
@@ -301,10 +351,19 @@ export function PA03() {
     </div>
     <div className="card">
       <h3>🔒 Encrypt</h3>
-      <div className="input-group"><label>Key (hex)</label><input value={key} onChange={e => setKey(e.target.value)} /></div>
+      <div className="input-group"><label>Key (hex, 16 bytes)</label><input value={key} onChange={e => setKey(e.target.value)} /></div>
       <div className="input-group"><label>Message (hex)</label><input value={msg} onChange={e => setMsg(e.target.value)} /></div>
       <button className="btn btn-primary" onClick={run} disabled={loading}>{loading ? <span className="spinner"/> : "Encrypt"}</button>
-      {result && <div className="output-box fade-in"><pre>{JSON.stringify(result, null, 2)}</pre></div>}
+      {result && !result.error && (
+        <div className="fade-in" style={{ marginTop: "0.75rem" }}>
+          <Field label="Nonce / IV (hex)" value={result.nonce_hex} />
+          <Field label="Ciphertext (hex)" value={result.ciphertext_hex} accent="var(--accent-purple)" />
+          <div style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginTop: 4 }}>
+            Ciphertext = F_k(nonce) ⊕ message — safe to reuse key with fresh nonce
+          </div>
+        </div>
+      )}
+      {result?.error && <div className="output-box fade-in"><pre style={{color:"var(--accent-red)"}}>{result.error}</pre></div>}
     </div>
   </>);
 }
@@ -341,7 +400,16 @@ export function PA04() {
       <div className="input-group"><label>Key (hex)</label><input value={key} onChange={e => setKey(e.target.value)} /></div>
       <div className="input-group"><label>Message (hex)</label><input value={msg} onChange={e => setMsg(e.target.value)} /></div>
       <button className="btn btn-primary" onClick={run} disabled={loading}>{loading ? <span className="spinner"/> : `Encrypt (${mode})`}</button>
-      {result && <div className="output-box fade-in"><pre>{JSON.stringify(result, null, 2)}</pre></div>}
+      {result && !result.error && (
+        <div className="fade-in" style={{ marginTop: "0.75rem" }}>
+          <div className="result-row" style={{marginBottom:"0.5rem"}}>
+            <span className="badge badge-info">Mode: {result.mode}</span>
+          </div>
+          <Field label="IV / Nonce (hex)" value={result.iv_hex} />
+          <Field label="Ciphertext (hex)" value={result.ciphertext_hex} accent="var(--accent-purple)" />
+        </div>
+      )}
+      {result?.error && <div className="output-box fade-in"><pre style={{color:"var(--accent-red)"}}>{result.error}</pre></div>}
     </div>
   </>);
 }
@@ -378,7 +446,15 @@ export function PA05() {
       <div className="input-group"><label>Key (hex)</label><input value={key} onChange={e => setKey(e.target.value)} /></div>
       <div className="input-group"><label>Message (hex)</label><input value={msg} onChange={e => setMsg(e.target.value)} /></div>
       <button className="btn btn-primary" onClick={run} disabled={loading}>{loading ? <span className="spinner"/> : "Compute Tag"}</button>
-      {result && <div className="output-box fade-in"><pre>{JSON.stringify(result, null, 2)}</pre></div>}
+      {result && !result.error && (
+        <div className="fade-in" style={{ marginTop: "0.75rem" }}>
+          <div className="result-row" style={{marginBottom:"0.5rem"}}>
+            <span className="badge badge-info">Type: {result.mac_type?.toUpperCase()}</span>
+          </div>
+          <Field label="Authentication Tag (hex)" value={result.tag_hex} accent="var(--accent-green)" />
+        </div>
+      )}
+      {result?.error && <div className="output-box fade-in"><pre style={{color:"var(--accent-red)"}}>{result.error}</pre></div>}
     </div>
   </>);
 }
@@ -407,7 +483,17 @@ export function PA06() {
       <div className="input-group"><label>Key (hex)</label><input value={key} onChange={e => setKey(e.target.value)} /></div>
       <div className="input-group"><label>Message (hex)</label><input value={msg} onChange={e => setMsg(e.target.value)} /></div>
       <button className="btn btn-primary" onClick={run} disabled={loading}>{loading ? <span className="spinner"/> : "CCA Encrypt"}</button>
-      {result && <div className="output-box fade-in"><pre>{JSON.stringify(result, null, 2)}</pre></div>}
+      {result && !result.error && (
+        <div className="fade-in" style={{ marginTop: "0.75rem" }}>
+          <Field label="Nonce (hex)" value={result.nonce_hex} />
+          <Field label="Ciphertext (hex)" value={result.ciphertext_hex} accent="var(--accent-purple)" />
+          <Field label="Authentication Tag (hex)" value={result.tag_hex} accent="var(--accent-green)" />
+          <div style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginTop: 4 }}>
+            {result.note}
+          </div>
+        </div>
+      )}
+      {result?.error && <div className="output-box fade-in"><pre style={{color:"var(--accent-red)"}}>{result.error}</pre></div>}
     </div>
   </>);
 }

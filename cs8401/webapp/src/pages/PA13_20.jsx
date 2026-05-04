@@ -1,6 +1,21 @@
 import { useState } from "react";
 import { apiFetch } from "../api";
 
+// ── Shared helpers ────────────────────────────────────────────────────────────
+function Field({ label, value, mono = true, accent }) {
+  return (
+    <div style={{ marginBottom: "0.5rem" }}>
+      <div style={{ fontSize: "0.68rem", color: "var(--text-muted)", marginBottom: 2 }}>{label}</div>
+      <div style={{
+        fontFamily: mono ? "'JetBrains Mono', monospace" : "inherit",
+        fontSize: "0.8rem", color: accent || "var(--accent-cyan)",
+        background: "var(--bg-input)", padding: "0.4rem 0.6rem",
+        borderRadius: 6, border: "1px solid var(--border)", wordBreak: "break-all"
+      }}>{String(value)}</div>
+    </div>
+  );
+}
+
 // ── PA#13: Miller-Rabin ──────────────────────────────────────────────────────
 export function PA13() {
   const [n, setN] = useState(104729);
@@ -16,21 +31,49 @@ export function PA13() {
         <button className="btn btn-primary" onClick={run} disabled={loading}>{loading ? <span className="spinner"/> : "Test Primality"}</button>
         <button className="btn btn-danger" onClick={runCarmichael} disabled={loading}>Carmichael Demo</button>
       </div>
-      {result && <div className="fade-in">
-        {result.final_is_prime !== undefined && (
-          <div className="result-row"><span className={`badge ${result.final_is_prime ? 'badge-success' : 'badge-error'}`}>
-            {n} is {result.final_is_prime ? '' : 'NOT '}prime
-          </span></div>
-        )}
-        {result.rounds && <div className="result-row" style={{marginTop:'0.5rem'}}>
-          {result.rounds.map((r, i) => (
-            <span key={i} className={`badge ${r.composite_detected ? 'badge-error' : 'badge-success'}`} style={{fontSize:'0.7rem'}}>
-              R{r.round}: {r.composite_detected ? 'COMP' : 'PASS'}
-            </span>
-          ))}
-        </div>}
-        <div className="output-box"><pre>{JSON.stringify(result, null, 2)}</pre></div>
-      </div>}
+      {result && !result.error && (
+        <div className="fade-in" style={{ marginTop: "0.75rem" }}>
+          {/* Miller-Rabin rounds result */}
+          {result.final_is_prime !== undefined && (
+            <>
+              <div className="result-row" style={{ marginBottom: "0.75rem" }}>
+                <span className={`badge ${result.final_is_prime ? "badge-success" : "badge-error"}`}>
+                  {result.n ?? n} is {result.final_is_prime ? "" : "NOT "}prime
+                </span>
+              </div>
+              {result.rounds && (
+                <div style={{ marginBottom: "0.75rem" }}>
+                  <div style={{ fontSize: "0.7rem", color: "var(--text-muted)", marginBottom: 4 }}>Witness rounds:</div>
+                  <div className="result-row">
+                    {result.rounds.map((r, i) => (
+                      <span key={i} className={`badge ${r.composite_detected ? "badge-error" : "badge-success"}`} style={{fontSize:"0.7rem"}}>
+                        R{r.round}: {r.composite_detected ? "COMPOSITE" : "PASS"}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+          {/* Carmichael demo result */}
+          {result.carmichael_numbers && (
+            <>
+              <div style={{ fontSize: "0.78rem", color: "var(--text-secondary)", marginBottom: "0.5rem" }}>{result.note}</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: "0.4rem" }}>
+                {result.carmichael_numbers.map(c => (
+                  <div key={c.n} style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                    <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: "0.82rem", minWidth: 60 }}>{c.n}</span>
+                    <span className={`badge ${c.is_prime ? "badge-error" : "badge-success"}`}>
+                      Miller-Rabin: {c.is_prime ? "PRIME (false!)" : "NOT PRIME ✓"}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+      )}
+      {result?.error && <div className="output-box fade-in"><pre style={{color:"var(--accent-red)"}}>{result.error}</pre></div>}
     </div>
   </>);
 }
@@ -49,12 +92,26 @@ export function PA14() {
     setLoading(false);
   };
   return (<>
-    <div className="page-header"><h2><span className="pa-tag">PA#14</span> CRT & Håstad Attack</h2><p>Chinese Remainder Theorem solver</p></div>
+    <div className="page-header"><h2><span className="pa-tag">PA#14</span> CRT &amp; Håstad Attack</h2><p>Chinese Remainder Theorem solver</p></div>
     <div className="card"><h3>⚡ CRT Solver</h3>
       <div className="input-group"><label>Residues (comma-separated)</label><input value={residues} onChange={e => setResidues(e.target.value)} /></div>
       <div className="input-group"><label>Moduli (comma-separated)</label><input value={moduli} onChange={e => setModuli(e.target.value)} /></div>
       <button className="btn btn-primary" onClick={run} disabled={loading}>{loading ? <span className="spinner"/> : "Solve CRT"}</button>
-      {result && <div className="output-box fade-in"><pre>{JSON.stringify(result, null, 2)}</pre></div>}
+      {result && !result.error && (
+        <div className="fade-in" style={{ marginTop: "0.75rem" }}>
+          <Field label="Solution x" value={result.x} mono={false} accent="var(--accent-green)" />
+          <div style={{ fontSize: "0.68rem", color: "var(--text-muted)", marginBottom: 4, marginTop: "0.5rem" }}>Verification checks:</div>
+          {result.checks?.map((chk, i) => (
+            <div key={i} style={{
+              fontFamily: "'JetBrains Mono', monospace", fontSize: "0.75rem",
+              color: "var(--accent-cyan)", padding: "0.25rem 0.5rem",
+              background: "var(--bg-input)", borderRadius: 4, marginBottom: 3,
+              border: "1px solid var(--border)"
+            }}>{chk}</div>
+          ))}
+        </div>
+      )}
+      {result?.error && <div className="output-box fade-in"><pre style={{color:"var(--accent-red)"}}>{result.error}</pre></div>}
     </div>
   </>);
 }
@@ -68,19 +125,37 @@ export function PA15() {
   const verify = async () => { setLoading(true); setResult(await apiFetch("/pa15/verify", { message_hex: msg })); setLoading(false); };
   return (<>
     <div className="page-header"><h2><span className="pa-tag">PA#15</span> Digital Signatures</h2><p>RSA signature: σ = H(m)^d mod N</p></div>
-    <div className="card"><h3>✍️ Sign & Verify</h3>
+    <div className="card"><h3>✍️ Sign &amp; Verify</h3>
       <div className="input-group"><label>Message (hex)</label><input value={msg} onChange={e => setMsg(e.target.value)} /></div>
       <div className="input-row">
         <button className="btn btn-primary" onClick={sign} disabled={loading}>Sign</button>
         <button className="btn btn-success" onClick={verify} disabled={loading}>Sign + Verify + Tamper</button>
       </div>
-      {result && <div className="fade-in">
-        {result.valid !== undefined && <div className="result-row">
-          <span className={`badge ${result.valid ? 'badge-success' : 'badge-error'}`}>Valid: {result.valid ? '✓' : '✗'}</span>
-          <span className={`badge ${result.tampered_valid ? 'badge-error' : 'badge-success'}`}>Tampered: {result.tampered_valid ? 'FORGED!' : 'Rejected ✓'}</span>
-        </div>}
-        <div className="output-box"><pre>{JSON.stringify(result, null, 2)}</pre></div>
-      </div>}
+      {result && !result.error && (
+        <div className="fade-in" style={{ marginTop: "0.75rem" }}>
+          {/* Sign result */}
+          {result.signature !== undefined && (
+            <>
+              <Field label="Message (hex)" value={result.message_hex} />
+              <Field label="Hash H(m) as integer" value={result.hash_int} mono={false} accent="var(--text-secondary)" />
+              <Field label="Signature σ = H(m)^d mod N (prefix)" value={result.signature} />
+              <Field label="σ^e mod N (should = H(m))" value={result.sigma_e_mod_n} accent="var(--accent-green)" />
+            </>
+          )}
+          {/* Verify result */}
+          {result.valid !== undefined && (
+            <div className="result-row">
+              <span className={`badge ${result.valid ? "badge-success" : "badge-error"}`}>
+                Verify: {result.valid ? "✓ Valid" : "✗ Invalid"}
+              </span>
+              <span className={`badge ${result.tampered_valid ? "badge-error" : "badge-success"}`}>
+                Tampered: {result.tampered_valid ? "⚠ FORGED!" : "✓ Rejected"}
+              </span>
+            </div>
+          )}
+        </div>
+      )}
+      {result?.error && <div className="output-box fade-in"><pre style={{color:"var(--accent-red)"}}>{result.error}</pre></div>}
     </div>
   </>);
 }
@@ -100,14 +175,36 @@ export function PA16() {
         <button className="btn btn-primary" onClick={enc} disabled={loading}>Encrypt/Decrypt</button>
         <button className="btn btn-danger" onClick={mal} disabled={loading}>Malleability Attack</button>
       </div>
-      {result && <div className="fade-in">
-        {result.malleability_works !== undefined && <div className="result-row">
-          <span className={`badge ${result.malleability_works ? 'badge-error' : 'badge-success'}`}>
-            Malleability: {result.malleability_works ? 'WORKS (CCA broken!)' : 'Failed'}
-          </span>
-        </div>}
-        <div className="output-box"><pre>{JSON.stringify(result, null, 2)}</pre></div>
-      </div>}
+      {result && !result.error && (
+        <div className="fade-in" style={{ marginTop: "0.75rem" }}>
+          <Field label="Plaintext m" value={result.message} mono={false} accent="var(--text-primary)" />
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.5rem" }}>
+            <Field label="Ciphertext c₁ (prefix)" value={result.c1} />
+            <Field label="Ciphertext c₂ (prefix)" value={result.c2} />
+          </div>
+          <Field label="Decrypted m'" value={result.decrypted} mono={false} accent="var(--accent-green)" />
+          {/* Malleability specific */}
+          {result.malleability_works !== undefined && (
+            <>
+              <Field label="Malleable c₂ → decrypts to" value={result.malleable_decrypted} mono={false} accent="var(--accent-red)" />
+              <Field label="Expected 2·m" value={result.expected_2m} mono={false} accent="var(--text-secondary)" />
+              <div className="result-row" style={{marginTop:"0.25rem"}}>
+                <span className={`badge ${result.malleability_works ? "badge-error" : "badge-success"}`}>
+                  Malleability: {result.malleability_works ? "⚠ WORKS — CCA broken!" : "✗ Failed"}
+                </span>
+              </div>
+            </>
+          )}
+          {result.malleability_works === undefined && (
+            <div className="result-row">
+              <span className={`badge ${result.decrypted === result.message ? "badge-success" : "badge-error"}`}>
+                Roundtrip: {result.decrypted === result.message ? "✓ Correct" : "✗ Failed"}
+              </span>
+            </div>
+          )}
+        </div>
+      )}
+      {result?.error && <div className="output-box fade-in"><pre style={{color:"var(--accent-red)"}}>{result.error}</pre></div>}
     </div>
   </>);
 }
@@ -123,13 +220,22 @@ export function PA17() {
     <div className="card"><h3>🏰 CCA-PKC Encrypt + Tamper Test</h3>
       <div className="input-group"><label>Message (integer)</label><input type="number" value={msg} onChange={e => setMsg(+e.target.value)} /></div>
       <button className="btn btn-primary" onClick={run} disabled={loading}>{loading ? <span className="spinner"/> : "Encrypt + Tamper"}</button>
-      {result && <div className="fade-in">
-        <div className="result-row">
-          <span className={`badge ${result.correct ? 'badge-success' : 'badge-error'}`}>Decrypt: {result.correct ? '✓' : '✗'}</span>
-          <span className={`badge ${result.tampered_rejected ? 'badge-success' : 'badge-error'}`}>Tampered: {result.tampered_rejected ? 'Rejected ✓' : 'ACCEPTED!'}</span>
+      {result && !result.error && (
+        <div className="fade-in" style={{ marginTop: "0.75rem" }}>
+          <div className="result-row" style={{ marginBottom: "0.75rem" }}>
+            <span className={`badge ${result.correct ? "badge-success" : "badge-error"}`}>
+              Decrypt: {result.correct ? "✓ Correct" : "✗ Failed"}
+            </span>
+            <span className={`badge ${result.tampered_rejected ? "badge-success" : "badge-error"}`}>
+              Tampered: {result.tampered_rejected ? "✓ Rejected" : "⚠ ACCEPTED!"}
+            </span>
+          </div>
+          <Field label="Plaintext m" value={result.message} mono={false} accent="var(--text-primary)" />
+          <Field label="Decrypted m'" value={result.decrypted} mono={false} accent="var(--accent-green)" />
+          <Field label="Tampered decryption result" value={result.tampered_result === null ? "null (rejected)" : result.tampered_result} mono={false} accent="var(--accent-red)" />
         </div>
-        <div className="output-box"><pre>{JSON.stringify(result, null, 2)}</pre></div>
-      </div>}
+      )}
+      {result?.error && <div className="output-box fade-in"><pre style={{color:"var(--accent-red)"}}>{result.error}</pre></div>}
     </div>
   </>);
 }
@@ -153,13 +259,27 @@ export function PA18() {
         </div>
       </div>
       <button className="btn btn-primary" onClick={run} disabled={loading}>{loading ? <span className="spinner"/> : "Run OT"}</button>
-      {result && <div className="fade-in">
-        <div className="result-row">
-          <span className={`badge ${result.correct ? 'badge-success' : 'badge-error'}`}>Bob received m_{b} = {result.received} {result.correct ? '✓' : '✗'}</span>
-          <span className="badge badge-info">m_{'{1-b}'} = {b === 0 ? m1 : m0} (hidden from Bob)</span>
+      {result && !result.error && (
+        <div className="fade-in" style={{ marginTop: "0.75rem" }}>
+          <div className="result-row" style={{ marginBottom: "0.75rem" }}>
+            <span className={`badge ${result.correct ? "badge-success" : "badge-error"}`}>
+              Bob received m_{result.b} = {result.received} {result.correct ? "✓" : "✗"}
+            </span>
+            <span className="badge badge-info">
+              m_{1 - result.b} = {result.b === 0 ? m1 : m0} (hidden from Bob)
+            </span>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "0.5rem" }}>
+            <Field label="Bob's choice b" value={result.b} mono={false} accent="var(--text-primary)" />
+            <Field label="Received m_b" value={result.received} mono={false} accent="var(--accent-green)" />
+            <Field label="Expected" value={result.expected} mono={false} accent="var(--text-secondary)" />
+          </div>
+          <div style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginTop: 4 }}>
+            Alice cannot learn b; Bob cannot learn m_{"{1-b}"}
+          </div>
         </div>
-        <div className="output-box"><pre>{JSON.stringify(result, null, 2)}</pre></div>
-      </div>}
+      )}
+      {result?.error && <div className="output-box fade-in"><pre style={{color:"var(--accent-red)"}}>{result.error}</pre></div>}
     </div>
   </>);
 }
@@ -184,8 +304,46 @@ export function PA19() {
         <button className="btn btn-primary" onClick={run} disabled={loading}>Secure AND</button>
         <button className="btn btn-success" onClick={runTT} disabled={loading}>Full Truth Table</button>
       </div>
-      {result && <div className="result-row fade-in"><span className={`badge ${result.correct ? 'badge-success' : 'badge-error'}`}>{a} AND {b} = {result.result} {result.correct ? '✓' : '✗'}</span></div>}
-      {ttResult && <div className="output-box fade-in"><pre>{JSON.stringify(ttResult, null, 2)}</pre></div>}
+      {result && !result.error && (
+        <div className="fade-in" style={{ marginTop: "0.75rem" }}>
+          <div className="result-row" style={{ marginBottom: "0.75rem" }}>
+            <span className={`badge ${result.correct ? "badge-success" : "badge-error"}`}>
+              {result.a} AND {result.b} = {result.result} {result.correct ? "✓" : "✗"}
+            </span>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "0.5rem" }}>
+            <Field label="Alice's a" value={result.a} mono={false} accent="var(--text-primary)" />
+            <Field label="Bob's b" value={result.b} mono={false} accent="var(--text-primary)" />
+            <Field label="Secure AND result" value={result.result} mono={false} accent="var(--accent-green)" />
+          </div>
+        </div>
+      )}
+      {ttResult && !ttResult.error && (
+        <div className="fade-in" style={{ marginTop: "0.75rem" }}>
+          <div style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginBottom: 6 }}>Full Truth Table</div>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontFamily: "'JetBrains Mono',monospace", fontSize: "0.78rem" }}>
+            <thead>
+              <tr style={{ borderBottom: "1px solid var(--border)" }}>
+                {["a", "b", "AND", "XOR", "NOT a"].map(h => (
+                  <th key={h} style={{ padding: "0.3rem 0.5rem", color: "var(--text-muted)", textAlign: "center", fontWeight: 600 }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {ttResult.truth_table?.map((row, i) => (
+                <tr key={i} style={{ borderBottom: "1px solid var(--border)", color: "var(--accent-cyan)" }}>
+                  <td style={{ padding: "0.3rem 0.5rem", textAlign: "center" }}>{row.a}</td>
+                  <td style={{ padding: "0.3rem 0.5rem", textAlign: "center" }}>{row.b}</td>
+                  <td style={{ padding: "0.3rem 0.5rem", textAlign: "center", color: "var(--accent-green)" }}>{row.AND}</td>
+                  <td style={{ padding: "0.3rem 0.5rem", textAlign: "center", color: "var(--accent-blue)" }}>{row.XOR}</td>
+                  <td style={{ padding: "0.3rem 0.5rem", textAlign: "center", color: "var(--accent-amber)" }}>{row.NOT_a}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {(result?.error || ttResult?.error) && <div className="output-box fade-in"><pre style={{color:"var(--accent-red)"}}>{result?.error || ttResult?.error}</pre></div>}
     </div>
   </>);
 }
@@ -217,16 +375,40 @@ export function PA20() {
         <div className="input-group"><label>Bob's y (0-15)</label><input type="number" min={0} max={15} value={y} onChange={e => setY(+e.target.value)} /></div>
       </div>
       <button className="btn btn-primary" onClick={run} disabled={loading}>{loading ? <span className="spinner"/> : "Secure Evaluate"}</button>
-      {result && <div className="fade-in">
-        <div className="result-row">
-          {result.x_greater_than_y !== undefined && <span className={`badge ${result.x_greater_than_y ? 'badge-success' : 'badge-info'}`}>{x} {result.x_greater_than_y ? '>' : '≤'} {y}</span>}
-          {result.equal !== undefined && <span className={`badge ${result.equal ? 'badge-success' : 'badge-info'}`}>{x} {result.equal ? '==' : '!='} {y}</span>}
-          {result.sum !== undefined && <span className="badge badge-success">{x} + {y} = {result.sum} (mod 16)</span>}
-          <span className="badge badge-warn">OT calls: {result.ot_calls}</span>
-          <span className="badge badge-info">{result.elapsed_s}s</span>
+      {result && !result.error && (
+        <div className="fade-in" style={{ marginTop: "0.75rem" }}>
+          <div className="result-row" style={{ marginBottom: "0.75rem" }}>
+            {result.x_greater_than_y !== undefined && (
+              <span className={`badge ${result.x_greater_than_y ? "badge-success" : "badge-info"}`}>
+                {result.x} {result.x_greater_than_y ? ">" : "≤"} {result.y}
+              </span>
+            )}
+            {result.equal !== undefined && (
+              <span className={`badge ${result.equal ? "badge-success" : "badge-info"}`}>
+                {result.x} {result.equal ? "==" : "!="} {result.y}
+              </span>
+            )}
+            {result.sum !== undefined && (
+              <span className="badge badge-success">{result.x} + {result.y} = {result.sum} (mod 16)</span>
+            )}
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.5rem" }}>
+            <Field label="Alice's x" value={result.x} mono={false} accent="var(--text-primary)" />
+            <Field label="Bob's y" value={result.y} mono={false} accent="var(--text-primary)" />
+          </div>
+          {result.sum !== undefined && (
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.5rem" }}>
+              <Field label="Sum (mod 16)" value={result.sum} mono={false} accent="var(--accent-green)" />
+              <Field label="Carry bit" value={result.carry} mono={false} accent="var(--accent-amber)" />
+            </div>
+          )}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.5rem", marginTop: "0.25rem" }}>
+            <Field label="OT calls" value={result.ot_calls} mono={false} accent="var(--text-secondary)" />
+            <Field label="Elapsed" value={`${result.elapsed_s}s`} mono={false} accent="var(--text-muted)" />
+          </div>
         </div>
-        <div className="output-box"><pre>{JSON.stringify(result, null, 2)}</pre></div>
-      </div>}
+      )}
+      {result?.error && <div className="output-box fade-in"><pre style={{color:"var(--accent-red)"}}>{result.error}</pre></div>}
     </div>
   </>);
 }
