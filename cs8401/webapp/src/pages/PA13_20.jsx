@@ -292,7 +292,7 @@ export function PA19() {
   const [ttResult, setTTResult] = useState(null);
   const [loading, setLoading] = useState(false);
   const run = async () => { setLoading(true); setResult(await apiFetch("/pa19/secure_and", { a, b })); setLoading(false); };
-  const runTT = async () => { setLoading(true); setTTResult(await apiFetch("/pa19/truth_table")); setLoading(false); };
+  const runTT = async () => { setLoading(true); setTTResult(await apiFetch("/pa19/truth_table", {})); setLoading(false); };
   return (<>
     <div className="page-header"><h2><span className="pa-tag">PA#19</span> Secure AND / XOR / NOT</h2><p>Secure gates via OT and additive secret sharing</p></div>
     <div className="card"><h3>🚪 Secure AND</h3>

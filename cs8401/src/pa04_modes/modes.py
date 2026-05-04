@@ -27,6 +27,27 @@ def _unpad(m: bytes) -> bytes:
     return m[:-pad_len]
 
 
+# ── ECB Mode ──────────────────────────────────────────────────────────────────
+
+def ecb_encrypt(prf: AES_PRF, k: bytes, m: bytes) -> tuple[bytes, bytes]:
+    """ECB encryption. Each block encrypted independently — NOT IND-CPA secure."""
+    padded = _pad(m)
+    blocks = [padded[i:i+BLOCK_SIZE] for i in range(0, len(padded), BLOCK_SIZE)]
+    ct_blocks = [prf.encrypt_block(k, block) for block in blocks]
+    iv = bytes(BLOCK_SIZE)  # ECB has no IV; return zero bytes as placeholder
+    return iv, b''.join(ct_blocks)
+
+
+def ecb_decrypt(prf: AES_PRF, k: bytes, ct: bytes) -> bytes:
+    """ECB decryption."""
+    blocks = [ct[i:i+BLOCK_SIZE] for i in range(0, len(ct), BLOCK_SIZE)]
+    pt_blocks = []
+    for block in blocks:
+        dec = _aes_decrypt_block(prf, k, block)
+        pt_blocks.append(dec)
+    return _unpad(b''.join(pt_blocks))
+
+
 # ── CBC Mode ──────────────────────────────────────────────────────────────────
 
 def cbc_encrypt(prf: AES_PRF, k: bytes, m: bytes, iv: bytes = None) -> tuple[bytes, bytes]:
@@ -114,7 +135,9 @@ def ctr_decrypt(prf: AES_PRF, k: bytes, nonce: bytes, ct: bytes) -> bytes:
 def Encrypt(mode: str, k: bytes, m: bytes, prf: AES_PRF = None) -> tuple[bytes, bytes]:
     """Encrypt using specified mode. Returns (iv/nonce, ciphertext)."""
     prf = prf or AES_PRF()
-    if mode == 'CBC':
+    if mode == 'ECB':
+        return ecb_encrypt(prf, k, m)
+    elif mode == 'CBC':
         return cbc_encrypt(prf, k, m)
     elif mode == 'OFB':
         return ofb_encrypt(prf, k, m)
@@ -127,7 +150,9 @@ def Encrypt(mode: str, k: bytes, m: bytes, prf: AES_PRF = None) -> tuple[bytes, 
 def Decrypt(mode: str, k: bytes, iv: bytes, c: bytes, prf: AES_PRF = None) -> bytes:
     """Decrypt using specified mode."""
     prf = prf or AES_PRF()
-    if mode == 'CBC':
+    if mode == 'ECB':
+        return ecb_decrypt(prf, k, c)
+    elif mode == 'CBC':
         return cbc_decrypt(prf, k, iv, c)
     elif mode == 'OFB':
         return ofb_decrypt(prf, k, iv, c)

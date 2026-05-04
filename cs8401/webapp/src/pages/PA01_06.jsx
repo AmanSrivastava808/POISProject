@@ -163,17 +163,15 @@ export function PA01() {
       </button>
       {nist && !nist.error && (
         <div className="fade-in" style={{ marginTop: '0.75rem' }}>
-          {Object.entries(nist).filter(([k]) => k !== 'label').map(([testName, val]) => {
-            if (typeof val !== 'object') return null;
-            const passed = val.pass ?? val.result === 'pass';
-            const pVal = val.p_value ?? val.p ?? null;
+          {Object.entries(nist).filter(([k]) => k !== 'label' && typeof nist[k] === 'number').map(([testName, pVal]) => {
+            const passed = pVal > 0.01;
             return (
               <div key={testName} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.4rem 0', borderBottom: '1px solid var(--border)' }}>
                 <span className={`badge ${passed ? 'badge-success' : 'badge-error'}`} style={{minWidth:60, justifyContent:'center'}}>
                   {passed ? 'PASS' : 'FAIL'}
                 </span>
-                <span style={{ fontSize: '0.8rem', fontWeight: 500 }}>{testName}</span>
-                {pVal !== null && <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginLeft: 'auto' }}>p = {typeof pVal === 'number' ? pVal.toFixed(4) : pVal}</span>}
+                <span style={{ fontSize: '0.8rem', fontWeight: 500, textTransform: 'capitalize' }}>{testName}</span>
+                <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginLeft: 'auto' }}>p = {pVal.toFixed(4)}</span>
               </div>
             );
           })}
@@ -393,7 +391,7 @@ export function PA04() {
       <div className="input-row">
         <div className="input-group"><label>Mode</label>
           <select value={mode} onChange={e => setMode(e.target.value)}>
-            <option>ECB</option><option>CBC</option><option>CTR</option>
+            <option>ECB</option><option>CBC</option><option>OFB</option><option>CTR</option>
           </select>
         </div>
       </div>
@@ -404,8 +402,9 @@ export function PA04() {
         <div className="fade-in" style={{ marginTop: "0.75rem" }}>
           <div className="result-row" style={{marginBottom:"0.5rem"}}>
             <span className="badge badge-info">Mode: {result.mode}</span>
+            {result.mode === 'ECB' && <span className="badge badge-warn">⚠ No IV — NOT IND-CPA secure</span>}
           </div>
-          <Field label="IV / Nonce (hex)" value={result.iv_hex} />
+          {result.mode !== 'ECB' && <Field label="IV / Nonce (hex)" value={result.iv_hex} />}
           <Field label="Ciphertext (hex)" value={result.ciphertext_hex} accent="var(--accent-purple)" />
         </div>
       )}

@@ -347,4 +347,26 @@ if __name__ == "__main__":
     # 5. MD5/SHA-1 scale analysis
     md5_sha1_scale_analysis()
 
-    print("\n=== Done ===")
+    print("\n=== Done ===\n")
+
+import hashlib
+
+def toy_hash_n_bits(m: bytes, n_bits: int) -> bytes:
+    h = hashlib.sha256(m).digest()
+    trunc_bytes = (n_bits + 7) // 8
+    val = int.from_bytes(h[-trunc_bytes:], 'big') & ((1 << n_bits) - 1)
+    return val.to_bytes(trunc_bytes, 'big')
+
+def birthday_attack_naive(hash_fn, n_bits: int, max_attempts: int = None) -> tuple:
+    if max_attempts is None:
+        max_attempts = 50 * (1 << (n_bits // 2))
+
+    seen = {}
+    for i in range(max_attempts):
+        m = os.urandom(8)
+        h = hash_fn(m)
+        if h in seen and seen[h] != m:
+            return seen[h], m, i + 1
+        seen[h] = m
+    return None, None, max_attempts
+
