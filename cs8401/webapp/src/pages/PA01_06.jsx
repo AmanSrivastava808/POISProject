@@ -465,133 +465,321 @@ export function PA03() {
   </>);
 }
 
-// ── PA#4: Modes ──────────────────────────────────────────────────────────────
+// ── PA#4: Modes — ECB Determinism Demo ───────────────────────────────────────
 export function PA04() {
   const [mode, setMode] = useState("CTR");
   const [key, setKey] = useState("000102030405060708090a0b0c0d0e0f");
   const [msg, setMsg] = useState("48656c6c6f20576f726c642121212121");
   const [result, setResult] = useState(null);
+  const [ecbResult, setEcbResult] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [ecbLoading, setEcbLoading] = useState(false);
 
   const run = async () => {
     setLoading(true);
-    const r = await apiFetch("/pa04/encrypt", { mode, key_hex: key, message_hex: msg });
-    setResult(r);
-    setLoading(false);
+    const r = await apiFetch("/pa04/decrypt", { mode, key_hex: key, message_hex: msg });
+    setResult(r); setLoading(false);
   };
+
+  const runEcb = async () => {
+    setEcbLoading(true);
+    const r = await apiFetch("/pa04/ecb_demo", { key_hex: key, block_hex: msg.slice(0, 32) });
+    setEcbResult(r); setEcbLoading(false);
+  };
+
+  const modes = ["ECB", "CBC", "OFB", "CTR"];
+  const modeInfo = { ECB: "⚠️ Deterministic, no IV", CBC: "✅ IV-based chaining", OFB: "✅ Stream from IV", CTR: "✅ Counter-based stream" };
 
   return (<>
     <div className="page-header">
-      <h2><span className="pa-tag">PA#4</span> Block Cipher Modes</h2>
-      <p>ECB, CBC, CTR modes of operation</p>
+      <h2><span className="pa-tag">PA#4</span> Block Cipher Modes of Operation</h2>
+      <p>ECB, CBC, OFB, CTR — encrypt and decrypt with roundtrip verification.</p>
     </div>
+
     <div className="card">
-      <h3>🧱 Mode Encryption</h3>
-      <div className="input-row">
-        <div className="input-group"><label>Mode</label>
-          <select value={mode} onChange={e => setMode(e.target.value)}>
-            <option>ECB</option><option>CBC</option><option>OFB</option><option>CTR</option>
-          </select>
-        </div>
+      <h3>🧱 Encrypt → Decrypt Roundtrip</h3>
+      <div style={{ display: 'flex', gap: 6, marginBottom: '0.5rem', flexWrap: 'wrap' }}>
+        {modes.map(m => (
+          <button key={m} className={`btn ${mode === m ? 'btn-primary' : 'btn-ghost'}`}
+            onClick={() => { setMode(m); setResult(null); }}
+            style={{ fontSize: '0.78rem', padding: '0.35rem 0.7rem' }}>
+            {m}
+          </button>
+        ))}
       </div>
-      <div className="input-group"><label>Key (hex)</label><input value={key} onChange={e => setKey(e.target.value)} /></div>
-      <div className="input-group"><label>Message (hex)</label><input value={msg} onChange={e => setMsg(e.target.value)} /></div>
-      <button className="btn btn-primary" onClick={run} disabled={loading}>{loading ? <span className="spinner"/> : `Encrypt (${mode})`}</button>
+      <div style={{ fontSize: '0.72rem', color: mode === 'ECB' ? 'var(--accent-red)' : 'var(--accent-green)', marginBottom: '0.5rem' }}>
+        {modeInfo[mode]}
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+        <div className="input-group"><label>Key (hex, 16 bytes)</label><input value={key} onChange={e => setKey(e.target.value)} /></div>
+        <div className="input-group"><label>Plaintext (hex)</label><input value={msg} onChange={e => setMsg(e.target.value)} /></div>
+      </div>
+      <button className="btn btn-primary" onClick={run} disabled={loading}>
+        {loading ? <span className="spinner"/> : `🔐 Encrypt (${mode}) → Decrypt`}
+      </button>
       {result && !result.error && (
-        <div className="fade-in" style={{ marginTop: "0.75rem" }}>
-          <div className="result-row" style={{marginBottom:"0.5rem"}}>
+        <div className="fade-in" style={{ marginTop: '0.75rem' }}>
+          <div className="result-row" style={{ marginBottom: '0.5rem' }}>
             <span className="badge badge-info">Mode: {result.mode}</span>
             {result.mode === 'ECB' && <span className="badge badge-warn">⚠ No IV — NOT IND-CPA secure</span>}
+            <span className={`badge ${result.roundtrip ? 'badge-success' : 'badge-error'}`}>
+              Roundtrip: {result.roundtrip ? '✓' : '✗'}
+            </span>
           </div>
           {result.mode !== 'ECB' && <Field label="IV / Nonce (hex)" value={result.iv_hex} />}
           <Field label="Ciphertext (hex)" value={result.ciphertext_hex} accent="var(--accent-purple)" />
+          <Field label="Decrypted (hex)" value={result.plaintext_hex} accent="var(--accent-green)" />
         </div>
       )}
-      {result?.error && <div className="output-box fade-in"><pre style={{color:"var(--accent-red)"}}>{result.error}</pre></div>}
+    </div>
+
+    <div className="card" style={{ borderColor: 'rgba(239,68,68,0.4)' }}>
+      <h3>🔬 ECB Determinism Demo</h3>
+      <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginBottom: '0.5rem' }}>
+        Same plaintext block encrypted twice: ECB produces <strong>identical</strong> ciphertext blocks (information leak!). CBC and CTR produce different blocks.
+      </p>
+      <button className="btn btn-danger" onClick={runEcb} disabled={ecbLoading}>
+        {ecbLoading ? <span className="spinner"/> : "🧪 Encrypt Same Block Twice (ECB vs CBC vs CTR)"}
+      </button>
+
+      {ecbResult && (
+        <div className="fade-in" style={{ marginTop: '0.75rem' }}>
+          <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginBottom: 6 }}>
+            Plaintext block (repeated): <span style={{ color: 'var(--accent-cyan)', fontFamily: "'JetBrains Mono', monospace" }}>{ecbResult.block_hex}</span>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.5rem' }}>
+            {[
+              { name: 'ECB', data: ecbResult.ecb, color: 'rgba(239,68,68,0.08)', border: 'rgba(239,68,68,0.3)' },
+              { name: 'CBC', data: ecbResult.cbc, color: 'rgba(16,185,129,0.08)', border: 'rgba(16,185,129,0.3)' },
+              { name: 'CTR', data: ecbResult.ctr, color: 'rgba(59,130,246,0.08)', border: 'rgba(59,130,246,0.3)' },
+            ].map(({ name, data, color, border }) => (
+              <div key={name} style={{ background: color, borderRadius: 8, padding: '0.6rem', border: `1px solid ${border}` }}>
+                <div style={{ fontSize: '0.75rem', fontWeight: 600, marginBottom: 4, color: data.identical ? 'var(--accent-red)' : 'var(--accent-green)' }}>{name}</div>
+                <div style={{ fontSize: '0.62rem', fontFamily: "'JetBrains Mono', monospace", color: 'var(--accent-cyan)', wordBreak: 'break-all', marginBottom: 2 }}>
+                  C₁: {data.c1}
+                </div>
+                <div style={{ fontSize: '0.62rem', fontFamily: "'JetBrains Mono', monospace", color: 'var(--accent-purple)', wordBreak: 'break-all', marginBottom: 4 }}>
+                  C₂: {data.c2}
+                </div>
+                <span className={`badge ${data.identical ? 'badge-error' : 'badge-success'}`} style={{ fontSize: '0.65rem' }}>
+                  {data.identical ? '⚠ C₁ = C₂ (leak!)' : '✅ C₁ ≠ C₂'}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   </>);
 }
 
-// ── PA#5: MAC ────────────────────────────────────────────────────────────────
+// ── PA#5: MAC — Compute, Verify, Tamper ──────────────────────────────────────
 export function PA05() {
   const [key, setKey] = useState("000102030405060708090a0b0c0d0e0f");
   const [msg, setMsg] = useState("48656c6c6f");
   const [macType, setMacType] = useState("prf");
   const [result, setResult] = useState(null);
+  const [tamperResult, setTamperResult] = useState(null);
   const [loading, setLoading] = useState(false);
 
   const run = async () => {
+    setLoading(true); setTamperResult(null);
+    setResult(await apiFetch("/pa05/mac", { key_hex: key, message_hex: msg, mac_type: macType }));
+    setLoading(false);
+  };
+
+  const runTamper = async () => {
     setLoading(true);
-    const r = await apiFetch("/pa05/mac", { key_hex: key, message_hex: msg, mac_type: macType });
-    setResult(r);
+    setTamperResult(await apiFetch("/pa05/tamper_test", { key_hex: key, message_hex: msg, mac_type: macType }));
     setLoading(false);
   };
 
   return (<>
     <div className="page-header">
       <h2><span className="pa-tag">PA#5</span> Message Authentication Codes</h2>
-      <p>PRF-MAC and CBC-MAC — EUF-CMA secure</p>
+      <p>PRF-MAC and CBC-MAC — EUF-CMA secure. Any tampering invalidates the tag.</p>
     </div>
+
     <div className="card">
-      <h3>✅ Compute MAC</h3>
-      <div className="input-row">
-        <div className="input-group"><label>Type</label>
-          <select value={macType} onChange={e => setMacType(e.target.value)}>
-            <option value="prf">PRF-MAC</option><option value="cbc">CBC-MAC</option>
-          </select>
-        </div>
+      <h3>✅ Compute MAC Tag</h3>
+      <div style={{ display: 'flex', gap: 6, marginBottom: '0.5rem' }}>
+        {["prf", "cbc"].map(t => (
+          <button key={t} className={`btn ${macType === t ? 'btn-primary' : 'btn-ghost'}`}
+            onClick={() => { setMacType(t); setResult(null); setTamperResult(null); }}
+            style={{ fontSize: '0.78rem', padding: '0.35rem 0.7rem' }}>
+            {t === 'prf' ? 'PRF-MAC' : 'CBC-MAC'}
+          </button>
+        ))}
       </div>
-      <div className="input-group"><label>Key (hex)</label><input value={key} onChange={e => setKey(e.target.value)} /></div>
-      <div className="input-group"><label>Message (hex)</label><input value={msg} onChange={e => setMsg(e.target.value)} /></div>
-      <button className="btn btn-primary" onClick={run} disabled={loading}>{loading ? <span className="spinner"/> : "Compute Tag"}</button>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+        <div className="input-group"><label>Key (hex)</label><input value={key} onChange={e => setKey(e.target.value)} /></div>
+        <div className="input-group"><label>Message (hex)</label><input value={msg} onChange={e => setMsg(e.target.value)} /></div>
+      </div>
+      <div className="input-row">
+        <button className="btn btn-primary" onClick={run} disabled={loading}>
+          {loading ? <span className="spinner"/> : `🏷️ Compute ${macType === 'prf' ? 'PRF' : 'CBC'}-MAC`}
+        </button>
+        <button className="btn btn-danger" onClick={runTamper} disabled={loading}>
+          🔬 Tamper Test (EUF-CMA)
+        </button>
+      </div>
       {result && !result.error && (
-        <div className="fade-in" style={{ marginTop: "0.75rem" }}>
-          <div className="result-row" style={{marginBottom:"0.5rem"}}>
-            <span className="badge badge-info">Type: {result.mac_type?.toUpperCase()}</span>
+        <div className="fade-in" style={{ marginTop: '0.75rem' }}>
+          <div className="result-row" style={{ marginBottom: '0.5rem' }}>
+            <span className="badge badge-info">Type: {result.mac_type?.toUpperCase()}-MAC</span>
           </div>
           <Field label="Authentication Tag (hex)" value={result.tag_hex} accent="var(--accent-green)" />
         </div>
       )}
-      {result?.error && <div className="output-box fade-in"><pre style={{color:"var(--accent-red)"}}>{result.error}</pre></div>}
     </div>
+
+    {tamperResult && (
+      <div className="card fade-in">
+        <h3>🔒 Tamper Resistance (EUF-CMA)</h3>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.75rem' }}>
+          <div style={{ background: 'rgba(16,185,129,0.08)', borderRadius: 8, padding: '0.75rem', border: '1px solid rgba(16,185,129,0.3)' }}>
+            <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginBottom: 6 }}>✅ Original (m, tag)</div>
+            <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '0.68rem', color: 'var(--accent-cyan)', marginBottom: 4, wordBreak: 'break-all' }}>{msg}</div>
+            <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '0.68rem', color: 'var(--accent-green)', marginBottom: 6, wordBreak: 'break-all' }}>{tamperResult.tag_hex?.slice(0, 16)}...</div>
+            <span className={`badge ${tamperResult.original_valid ? 'badge-success' : 'badge-error'}`}>
+              {tamperResult.original_valid ? '✅ Valid' : '❌ Invalid'}
+            </span>
+          </div>
+          <div style={{ background: 'rgba(239,68,68,0.08)', borderRadius: 8, padding: '0.75rem', border: '1px solid rgba(239,68,68,0.3)' }}>
+            <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginBottom: 6 }}>🔀 Tampered message</div>
+            <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '0.68rem', color: 'var(--accent-red)', marginBottom: 4, wordBreak: 'break-all' }}>{tamperResult.tampered_msg_hex}</div>
+            <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '0.68rem', color: 'var(--accent-green)', marginBottom: 6, wordBreak: 'break-all' }}>{tamperResult.tag_hex?.slice(0, 16)}... (same tag)</div>
+            <span className={`badge ${tamperResult.msg_tampered_valid ? 'badge-error' : 'badge-success'}`}>
+              {tamperResult.msg_tampered_valid ? '⚠️ Accepted!' : '✅ Rejected'}
+            </span>
+          </div>
+          <div style={{ background: 'rgba(245,158,11,0.08)', borderRadius: 8, padding: '0.75rem', border: '1px solid rgba(245,158,11,0.3)' }}>
+            <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginBottom: 6 }}>🏷️ Tampered tag</div>
+            <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '0.68rem', color: 'var(--accent-cyan)', marginBottom: 4, wordBreak: 'break-all' }}>{msg} (same msg)</div>
+            <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '0.68rem', color: 'var(--accent-amber)', marginBottom: 6, wordBreak: 'break-all' }}>{tamperResult.tampered_tag_hex?.slice(0, 16)}...</div>
+            <span className={`badge ${tamperResult.tag_tampered_valid ? 'badge-error' : 'badge-success'}`}>
+              {tamperResult.tag_tampered_valid ? '⚠️ Accepted!' : '✅ Rejected'}
+            </span>
+          </div>
+        </div>
+        <div style={{ marginTop: '0.75rem', fontSize: '0.72rem', color: 'var(--text-muted)', textAlign: 'center' }}>
+          Any modification to the message or tag causes verification to fail — EUF-CMA security.
+        </div>
+      </div>
+    )}
   </>);
 }
 
-// ── PA#6: CCA ────────────────────────────────────────────────────────────────
+// ── PA#6: CCA — Malleability Attack Panel ────────────────────────────────────
 export function PA06() {
   const [key, setKey] = useState("000102030405060708090a0b0c0d0e0f");
   const [msg, setMsg] = useState("48656c6c6f");
-  const [result, setResult] = useState(null);
+  const [encResult, setEncResult] = useState(null);
+  const [flipBit, setFlipBit] = useState(0);
+  const [flipResult, setFlipResult] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [flipLoading, setFlipLoading] = useState(false);
 
   const run = async () => {
-    setLoading(true);
-    const r = await apiFetch("/pa06/encrypt", { key_hex: key, message_hex: msg });
-    setResult(r);
+    setLoading(true); setFlipResult(null);
+    setEncResult(await apiFetch("/pa06/encrypt", { key_hex: key, message_hex: msg }));
     setLoading(false);
   };
 
+  const runFlip = async () => {
+    setFlipLoading(true);
+    setFlipResult(await apiFetch("/pa06/bitflip", { key_hex: key, message_hex: msg, flip_bit: flipBit }));
+    setFlipLoading(false);
+  };
+
+  const maxBit = Math.max(msg.length * 4 - 1, 7);
+
   return (<>
     <div className="page-header">
-      <h2><span className="pa-tag">PA#6</span> CCA-Secure Encryption</h2>
-      <p>Encrypt-then-MAC — IND-CCA2 secure symmetric encryption</p>
+      <h2><span className="pa-tag">PA#6</span> CCA-Secure Encryption — Malleability Attack</h2>
+      <p>Encrypt-then-MAC (IND-CCA2). Flip a bit: CPA-only shows corrupted plaintext, CCA rejects with ⊥.</p>
     </div>
+
     <div className="card">
-      <h3>🛡️ CCA Encrypt</h3>
-      <div className="input-group"><label>Key (hex)</label><input value={key} onChange={e => setKey(e.target.value)} /></div>
-      <div className="input-group"><label>Message (hex)</label><input value={msg} onChange={e => setMsg(e.target.value)} /></div>
-      <button className="btn btn-primary" onClick={run} disabled={loading}>{loading ? <span className="spinner"/> : "CCA Encrypt"}</button>
-      {result && !result.error && (
-        <div className="fade-in" style={{ marginTop: "0.75rem" }}>
-          <Field label="Nonce (hex)" value={result.nonce_hex} />
-          <Field label="Ciphertext (hex)" value={result.ciphertext_hex} accent="var(--accent-purple)" />
-          <Field label="Authentication Tag (hex)" value={result.tag_hex} accent="var(--accent-green)" />
-          <div style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginTop: 4 }}>
-            {result.note}
+      <h3>🛡️ Encrypt-then-MAC</h3>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+        <div className="input-group"><label>Key (hex, 16B → k_E, k_M derived)</label><input value={key} onChange={e => setKey(e.target.value)} /></div>
+        <div className="input-group"><label>Message (hex)</label><input value={msg} onChange={e => setMsg(e.target.value)} /></div>
+      </div>
+      <button className="btn btn-primary" onClick={run} disabled={loading}>
+        {loading ? <span className="spinner"/> : "🔐 CCA Encrypt"}
+      </button>
+      {encResult && !encResult.error && (
+        <div className="fade-in" style={{ marginTop: '0.75rem' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.5rem' }}>
+            <Field label="Nonce r (hex)" value={encResult.nonce_hex} />
+            <Field label="Ciphertext c (hex)" value={encResult.ciphertext_hex} accent="var(--accent-purple)" />
+            <Field label="MAC tag t (hex)" value={encResult.tag_hex} accent="var(--accent-green)" />
+          </div>
+          <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: 4 }}>
+            {encResult.note}
           </div>
         </div>
       )}
-      {result?.error && <div className="output-box fade-in"><pre style={{color:"var(--accent-red)"}}>{result.error}</pre></div>}
+    </div>
+
+    <div className="card" style={{ borderColor: 'rgba(239,68,68,0.4)' }}>
+      <h3>🔬 Bit-Flip Malleability Attack</h3>
+      <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginBottom: '0.5rem' }}>
+        Flip bit <strong>{flipBit}</strong> in the ciphertext. CPA-only: corrupted plaintext leaks through.
+        CCA (Encrypt-then-MAC): MAC verification fails → output ⊥.
+      </p>
+      <div className="input-group">
+        <label>Flip bit position: {flipBit} <span style={{ color: 'var(--text-muted)', fontSize: '0.7rem' }}>(byte {Math.floor(flipBit/8)}, bit {flipBit%8})</span></label>
+        <input type="range" min={0} max={maxBit} value={flipBit} onChange={e => setFlipBit(+e.target.value)}
+          style={{ width: '100%', accentColor: 'var(--accent-red)' }} />
+        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.65rem', color: 'var(--text-muted)' }}>
+          <span>bit 0</span><span>bit {maxBit}</span>
+        </div>
+      </div>
+      <button className="btn btn-danger" onClick={runFlip} disabled={flipLoading}>
+        {flipLoading ? <span className="spinner"/> : `⚡ Flip Bit ${flipBit} → Compare`}
+      </button>
+
+      {flipResult && (
+        <div className="fade-in" style={{ marginTop: '0.75rem' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+            <div style={{ background: 'rgba(239,68,68,0.08)', borderRadius: 8, padding: '0.75rem', border: '1px solid rgba(239,68,68,0.3)' }}>
+              <div style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--accent-red)', marginBottom: 6 }}>
+                CPA-Only (CTR, no MAC)
+              </div>
+              <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', marginBottom: 2 }}>Original ciphertext:</div>
+              <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '0.65rem', color: 'var(--accent-cyan)', wordBreak: 'break-all', marginBottom: 4 }}>{flipResult.cpa?.ciphertext_hex}</div>
+              <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', marginBottom: 2 }}>Flipped ciphertext:</div>
+              <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '0.65rem', color: 'var(--accent-red)', wordBreak: 'break-all', marginBottom: 6 }}>{flipResult.cpa?.flipped_hex}</div>
+              <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', marginBottom: 2 }}>Decrypted (corrupted):</div>
+              <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '0.75rem', color: 'var(--accent-amber)', wordBreak: 'break-all', marginBottom: 6 }}>{flipResult.cpa?.decrypted_hex}</div>
+              <span className={`badge ${flipResult.cpa?.corrupted ? 'badge-error' : 'badge-success'}`}>
+                {flipResult.cpa?.corrupted ? '⚠️ Corrupted plaintext leaked!' : '✓ Unchanged'}
+              </span>
+            </div>
+
+            <div style={{ background: 'rgba(16,185,129,0.08)', borderRadius: 8, padding: '0.75rem', border: '1px solid rgba(16,185,129,0.3)' }}>
+              <div style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--accent-green)', marginBottom: 6 }}>
+                CCA (Encrypt-then-MAC)
+              </div>
+              <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', marginBottom: 2 }}>Original ciphertext:</div>
+              <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '0.65rem', color: 'var(--accent-cyan)', wordBreak: 'break-all', marginBottom: 4 }}>{flipResult.cca?.ciphertext_hex}</div>
+              <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', marginBottom: 2 }}>Flipped ciphertext:</div>
+              <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '0.65rem', color: 'var(--accent-red)', wordBreak: 'break-all', marginBottom: 6 }}>{flipResult.cca?.flipped_hex}</div>
+              <div style={{ fontSize: '0.75rem', color: 'var(--accent-green)', fontWeight: 600, marginBottom: 6 }}>
+                MAC Verify → ✗ FAIL
+              </div>
+              <span className={`badge ${flipResult.cca?.rejected ? 'badge-success' : 'badge-error'}`}>
+                {flipResult.cca?.rejected ? '✅ Rejected → output ⊥' : '⚠️ Accepted!'}
+              </span>
+            </div>
+          </div>
+          <div style={{ marginTop: '0.5rem', fontSize: '0.72rem', color: 'var(--text-muted)', textAlign: 'center' }}>
+            CPA-only: adversary controls plaintext bits. CCA: MAC catches every modification.
+          </div>
+        </div>
+      )}
     </div>
   </>);
 }

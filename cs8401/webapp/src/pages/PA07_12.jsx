@@ -16,38 +16,139 @@ function Field({ label, value, mono = true, accent }) {
   );
 }
 
-// ── PA#7: Merkle-Damgard ─────────────────────────────────────────────────────
+// ── PA#7: Merkle-Damgård Chain Viewer ────────────────────────────────────────
 export function PA07() {
   const [msg, setMsg] = useState("48656c6c6f20576f726c64");
-  const [result, setResult] = useState(null);
+  const [hashResult, setHashResult] = useState(null);
+  const [chainResult, setChainResult] = useState(null);
   const [loading, setLoading] = useState(false);
-  const run = async () => { setLoading(true); setResult(await apiFetch("/pa07/hash", { message_hex: msg })); setLoading(false); };
+
+  const run = async () => {
+    setLoading(true);
+    const [h, c] = await Promise.all([
+      apiFetch("/pa07/hash", { message_hex: msg }),
+      apiFetch("/pa07/chain", { message_hex: msg }),
+    ]);
+    setHashResult(h); setChainResult(c); setLoading(false);
+  };
+
   return (<>
-    <div className="page-header"><h2><span className="pa-tag">PA#7</span> Merkle-Damgård Hash</h2><p>Iterated hash from compression function</p></div>
-    <div className="card"><h3>🔗 Hash Message</h3>
-      <div className="input-group"><label>Message (hex)</label><input value={msg} onChange={e => setMsg(e.target.value)} /></div>
-      <button className="btn btn-primary" onClick={run} disabled={loading}>{loading ? <span className="spinner"/> : "Hash"}</button>
-      {result && !result.error && (
-        <div className="fade-in" style={{ marginTop: "0.75rem" }}>
-          <Field label="Input Message (hex)" value={result.message_hex} />
-          <Field label="Digest (hex)" value={result.digest_hex} accent="var(--accent-green)" />
-          <Field label="Digest Size" value={`${result.digest_bytes} bytes`} mono={false} accent="var(--text-secondary)" />
+    <div className="page-header">
+      <h2><span className="pa-tag">PA#7</span> Merkle-Damgård Chain Viewer</h2>
+      <p>Type a message → see block splitting, MD-strengthening padding, and chaining values z₀ → h(zᵢ, Mᵢ) → digest.</p>
+    </div>
+
+    <div className="card">
+      <h3>🔗 Hash Message</h3>
+      <div className="input-group"><label>Message (hex)</label><input value={msg} onChange={e => setMsg(e.target.value)}
+        style={{ fontFamily: "'JetBrains Mono', monospace" }} /></div>
+      <button className="btn btn-primary" onClick={run} disabled={loading}>
+        {loading ? <span className="spinner"/> : "🔗 Hash + Show Chain"}
+      </button>
+      {hashResult && !hashResult.error && (
+        <div className="fade-in" style={{ marginTop: '0.75rem' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
+            <Field label="Input Message (hex)" value={hashResult.message_hex} />
+            <Field label="Digest (hex)" value={hashResult.digest_hex} accent="var(--accent-green)" />
+          </div>
+          <Field label="Digest Size" value={`${hashResult.digest_bytes} bytes`} mono={false} accent="var(--text-secondary)" />
         </div>
       )}
-      {result?.error && <div className="output-box fade-in"><pre style={{color:"var(--accent-red)"}}>{result.error}</pre></div>}
     </div>
+
+    {chainResult && chainResult.blocks && (
+      <div className="card fade-in">
+        <h3>📦 Padded Message & Blocks</h3>
+        <Field label="Padded message (hex)" value={chainResult.padded_hex} />
+        <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginBottom: 6 }}>
+          Block size: {chainResult.block_size} bytes • {chainResult.num_blocks} block(s)
+        </div>
+        <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: '0.5rem' }}>
+          {chainResult.blocks.map((blk, i) => (
+            <div key={i} style={{ background: 'rgba(59,130,246,0.08)', borderRadius: 6, padding: '0.4rem 0.6rem',
+              border: '1px solid rgba(59,130,246,0.2)', minWidth: 60 }}>
+              <div style={{ fontSize: '0.6rem', color: 'var(--text-muted)', marginBottom: 2 }}>M{i+1}</div>
+              <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '0.65rem', color: 'var(--accent-cyan)', wordBreak: 'break-all' }}>{blk}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+    )}
+
+    {chainResult && chainResult.chain && (
+      <div className="card fade-in">
+        <h3>⛓️ Chaining Values</h3>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap', overflowX: 'auto' }}>
+          {chainResult.chain.map((z, i) => (
+            <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+              <div style={{ background: i === 0 ? 'rgba(139,92,246,0.12)' : i === chainResult.chain.length - 1 ? 'rgba(16,185,129,0.12)' : 'rgba(59,130,246,0.08)',
+                borderRadius: 8, padding: '0.5rem 0.6rem',
+                border: `1px solid ${i === chainResult.chain.length - 1 ? 'rgba(16,185,129,0.4)' : 'rgba(59,130,246,0.2)'}`,
+                minWidth: 50, textAlign: 'center' }}>
+                <div style={{ fontSize: '0.58rem', color: 'var(--text-muted)', marginBottom: 2 }}>
+                  {i === 0 ? 'z₀ (IV)' : i === chainResult.chain.length - 1 ? 'Digest' : `z${i}`}
+                </div>
+                <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '0.68rem',
+                  color: i === chainResult.chain.length - 1 ? 'var(--accent-green)' : i === 0 ? 'var(--accent-purple)' : 'var(--accent-cyan)',
+                  wordBreak: 'break-all' }}>{z}</div>
+              </div>
+              {i < chainResult.chain.length - 1 && (
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0 }}>
+                  <div style={{ fontSize: '0.55rem', color: 'var(--accent-amber)' }}>h(z{i}, M{i+1})</div>
+                  <div style={{ fontSize: '1rem', color: 'var(--accent-amber)' }}>→</div>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+        <div style={{ marginTop: '0.75rem', fontSize: '0.72rem', color: 'var(--text-muted)', textAlign: 'center' }}>
+          Each chaining value zᵢ₊₁ = h(zᵢ, Mᵢ₊₁). The final value is the digest.
+        </div>
+      </div>
+    )}
   </>);
 }
 
-// ── PA#8: DLP-CRHF ───────────────────────────────────────────────────────────
+// ── PA#8: DLP-CRHF + Collision Hunt ──────────────────────────────────────────
 export function PA08() {
   const [msg, setMsg] = useState("48656c6c6f");
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [collision, setCollision] = useState(null);
+  const [collLoading, setCollLoading] = useState(false);
+  const [multiHash, setMultiHash] = useState(null);
+  const [multiLoading, setMultiLoading] = useState(false);
+
   const run = async () => { setLoading(true); setResult(await apiFetch("/pa08/hash", { message_hex: msg })); setLoading(false); };
+
+  const runCollision = async () => {
+    setCollLoading(true); setCollision(null);
+    const r = await apiFetch("/pa09/birthday", { bit_size: 16 });
+    setCollision(r); setCollLoading(false);
+  };
+
+  const runMultiHash = async () => {
+    setMultiLoading(true);
+    const msgs = ["48656c6c6f", "576f726c64", "00", "deadbeef", "48656c6c6f20576f726c6421"];
+    const results = [];
+    for (const m of msgs) {
+      const r = await apiFetch("/pa08/hash", { message_hex: m });
+      results.push({ input: m, digest: r?.digest_hex || "error" });
+    }
+    setMultiHash(results);
+    setMultiLoading(false);
+  };
+
+  const expected = 256; // 2^(16/2)
+
   return (<>
-    <div className="page-header"><h2><span className="pa-tag">PA#8</span> DLP-Based CRHF</h2><p>Collision-resistant hash from discrete log assumption</p></div>
-    <div className="card"><h3>#️⃣ DLP Hash</h3>
+    <div className="page-header">
+      <h2><span className="pa-tag">PA#8</span> DLP-Based CRHF — Live Hash & Collision Hunt</h2>
+      <p>h(x,y) = g<sup>x</sup> · ĥ<sup>y</sup> mod p — collision resistance from DLP hardness.</p>
+    </div>
+
+    <div className="card">
+      <h3>#️⃣ Live DLP Hash</h3>
       <div className="input-group"><label>Message (hex)</label><input value={msg} onChange={e => setMsg(e.target.value)} /></div>
       <button className="btn btn-primary" onClick={run} disabled={loading}>{loading ? <span className="spinner"/> : "Hash"}</button>
       {result && !result.error && (
@@ -55,11 +156,91 @@ export function PA08() {
           <Field label="Input Message (hex)" value={result.message_hex} />
           <Field label="DLP Digest (hex)" value={result.digest_hex} accent="var(--accent-green)" />
           <div style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginTop: 4 }}>
-            h(m) = g^m₁ · h^m₂ mod p — collision resistance follows from DLP hardness
+            h(m) = g<sup>m₁</sup> · ĥ<sup>m₂</sup> mod p — collision resistance follows from DLP hardness
           </div>
         </div>
       )}
-      {result?.error && <div className="output-box fade-in"><pre style={{color:"var(--accent-red)"}}>{result.error}</pre></div>}
+    </div>
+
+    <div className="card">
+      <h3>🔍 Collision Hunt (n = 16-bit truncated)</h3>
+      <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginBottom: '0.5rem' }}>
+        Brute-force birthday attack on 16-bit truncated output. Expected ≈ {expected} evaluations (2<sup>n/2</sup>).
+      </p>
+      <button className="btn btn-danger" onClick={runCollision} disabled={collLoading}>
+        {collLoading ? <><span className="spinner" style={{marginRight:6}}/> Searching...</> : "🎯 Run Collision Hunt"}
+      </button>
+
+      {collision && collision.collision_found && (
+        <div className="fade-in" style={{ marginTop: '0.75rem' }}>
+          <div className="result-row" style={{ marginBottom: '0.5rem' }}>
+            <span className="badge badge-success">💥 Collision in {collision.attempts} evals</span>
+            <span className="badge badge-info">Expected: ≈ {collision.expected_attempts}</span>
+            <span className="badge badge-warn">Ratio: {(collision.attempts / collision.expected_attempts).toFixed(2)}×</span>
+          </div>
+
+          {/* Progress bar */}
+          <div style={{ marginBottom: '0.75rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.68rem', color: 'var(--text-muted)', marginBottom: 2 }}>
+              <span>0</span><span>2<sup>n/2</sup> = {expected}</span><span>{Math.max(collision.attempts, expected)}</span>
+            </div>
+            <div style={{ width: '100%', height: 10, borderRadius: 5, background: 'var(--bg-input)', overflow: 'hidden', border: '1px solid var(--border)' }}>
+              <div style={{ width: `${Math.min(100, (collision.attempts / Math.max(collision.attempts, expected * 1.5)) * 100)}%`,
+                height: '100%', borderRadius: 5,
+                background: collision.attempts <= expected * 1.5 ? 'linear-gradient(90deg, var(--accent-green), var(--accent-cyan))' : 'linear-gradient(90deg, var(--accent-amber), var(--accent-red))',
+                transition: 'width 0.3s' }} />
+            </div>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+            <div style={{ background: 'rgba(59,130,246,0.08)', borderRadius: 8, padding: '0.75rem', border: '1px solid rgba(59,130,246,0.2)' }}>
+              <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginBottom: 4 }}>Message m₁</div>
+              <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '0.78rem', color: 'var(--accent-cyan)', wordBreak: 'break-all' }}>{collision.m1_hex}</div>
+            </div>
+            <div style={{ background: 'rgba(139,92,246,0.08)', borderRadius: 8, padding: '0.75rem', border: '1px solid rgba(139,92,246,0.2)' }}>
+              <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginBottom: 4 }}>Message m₂</div>
+              <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '0.78rem', color: 'var(--accent-purple)', wordBreak: 'break-all' }}>{collision.m2_hex}</div>
+            </div>
+          </div>
+          {collision.h1 && (
+            <div style={{ background: 'linear-gradient(135deg, rgba(239,68,68,0.1), rgba(245,158,11,0.08))',
+              borderRadius: 8, padding: '0.75rem', border: '1px solid rgba(239,68,68,0.3)', textAlign: 'center', marginTop: '0.75rem' }}>
+              <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginBottom: 4 }}>Shared truncated hash (16-bit)</div>
+              <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '1.1rem', color: 'var(--accent-red)', fontWeight: 600 }}>
+                H(m₁) = H(m₂) = {collision.h1}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+
+    <div className="card">
+      <h3>🧪 Integration Test — 5 Distinct Inputs</h3>
+      <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginBottom: '0.5rem' }}>
+        Hash 5 different messages; confirm distinct inputs → distinct digests.
+      </p>
+      <button className="btn btn-primary" onClick={runMultiHash} disabled={multiLoading}>
+        {multiLoading ? <span className="spinner"/> : "Run Integration Test"}
+      </button>
+      {multiHash && (
+        <div className="fade-in" style={{ marginTop: '0.75rem', overflowX: 'auto' }}>
+          <table className="data-table">
+            <thead><tr><th>#</th><th>Input (hex)</th><th>Digest (hex)</th><th>Unique?</th></tr></thead>
+            <tbody>{multiHash.map((r, i) => {
+              const dup = multiHash.findIndex((o, j) => j !== i && o.digest === r.digest);
+              return (
+                <tr key={i}>
+                  <td>{i + 1}</td>
+                  <td style={{ color: 'var(--accent-cyan)' }}>{r.input}</td>
+                  <td style={{ color: 'var(--accent-green)', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.digest?.slice(0, 16)}...</td>
+                  <td><span className={`badge ${dup === -1 ? 'badge-success' : 'badge-error'}`}>{dup === -1 ? '✓' : '✗'}</span></td>
+                </tr>
+              );
+            })}</tbody>
+          </table>
+        </div>
+      )}
     </div>
   </>);
 }
@@ -218,29 +399,125 @@ export function PA09() {
   </>);
 }
 
-// ── PA#10: HMAC ──────────────────────────────────────────────────────────────
+// ── PA#10: HMAC — Visual Construction + Verify/Forge ─────────────────────────
 export function PA10() {
   const [key, setKey] = useState("000102030405060708090a0b0c0d0e0f");
   const [msg, setMsg] = useState("48656c6c6f");
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [verifyResult, setVerifyResult] = useState(null);
+  const [verifyLoading, setVerifyLoading] = useState(false);
+
   const run = async () => { setLoading(true); setResult(await apiFetch("/pa10/hmac", { key_hex: key, message_hex: msg })); setLoading(false); };
+
+  const runVerify = async () => {
+    if (!result?.tag_hex) return;
+    setVerifyLoading(true);
+    const valid = await apiFetch("/pa10/hmac_verify", { key_hex: key, message_hex: msg, tag_hex: result.tag_hex });
+    // Tampered message
+    const tamperedMsg = msg.slice(0, -2) + (msg.slice(-2) === "00" ? "ff" : "00");
+    const invalid = await apiFetch("/pa10/hmac_verify", { key_hex: key, message_hex: tamperedMsg, tag_hex: result.tag_hex });
+    setVerifyResult({ valid: valid?.valid, invalid: invalid?.valid, tamperedMsg });
+    setVerifyLoading(false);
+  };
+
+  // SVG HMAC construction diagram
+  const DiagramSVG = () => (
+    <svg width="560" height="140" style={{ display: 'block', margin: '0.5rem auto' }}>
+      {/* k ⊕ ipad */}
+      <rect x="10" y="10" width="80" height="30" rx="6" fill="rgba(59,130,246,0.15)" stroke="#3b82f6" strokeWidth="1.5"/>
+      <text x="50" y="30" textAnchor="middle" fill="#3b82f6" fontSize="10" fontWeight="600" fontFamily="JetBrains Mono">k ⊕ ipad</text>
+      {/* concat */}
+      <text x="100" y="30" textAnchor="middle" fill="#64748b" fontSize="14">‖</text>
+      {/* message */}
+      <rect x="110" y="10" width="60" height="30" rx="6" fill="rgba(6,182,212,0.15)" stroke="#06b6d4" strokeWidth="1.5"/>
+      <text x="140" y="30" textAnchor="middle" fill="#06b6d4" fontSize="10" fontWeight="600" fontFamily="JetBrains Mono">m</text>
+      {/* arrow to inner H */}
+      <line x1="170" y1="25" x2="200" y2="25" stroke="#64748b" strokeWidth="1.5" markerEnd="url(#arrowH)"/>
+      {/* inner H */}
+      <rect x="200" y="5" width="70" height="40" rx="8" fill="rgba(139,92,246,0.15)" stroke="#8b5cf6" strokeWidth="1.5"/>
+      <text x="235" y="22" textAnchor="middle" fill="#8b5cf6" fontSize="9" fontWeight="600" fontFamily="JetBrains Mono">H(inner)</text>
+      <text x="235" y="36" textAnchor="middle" fill="#64748b" fontSize="7" fontFamily="JetBrains Mono">DLP-Hash</text>
+      {/* arrow down to second row */}
+      <line x1="235" y1="45" x2="235" y2="70" stroke="#64748b" strokeWidth="1.5"/>
+      {/* k ⊕ opad */}
+      <rect x="110" y="75" width="80" height="30" rx="6" fill="rgba(245,158,11,0.15)" stroke="#f59e0b" strokeWidth="1.5"/>
+      <text x="150" y="95" textAnchor="middle" fill="#f59e0b" fontSize="10" fontWeight="600" fontFamily="JetBrains Mono">k ⊕ opad</text>
+      {/* concat */}
+      <text x="200" y="95" textAnchor="middle" fill="#64748b" fontSize="14">‖</text>
+      {/* inner result */}
+      <rect x="210" y="75" width="60" height="30" rx="6" fill="rgba(139,92,246,0.1)" stroke="#8b5cf6" strokeWidth="1" strokeDasharray="3,2"/>
+      <text x="240" y="95" textAnchor="middle" fill="#8b5cf6" fontSize="9" fontFamily="JetBrains Mono">h_inner</text>
+      {/* arrow to outer H */}
+      <line x1="270" y1="90" x2="310" y2="90" stroke="#64748b" strokeWidth="1.5"/>
+      {/* outer H */}
+      <rect x="310" y="70" width="70" height="40" rx="8" fill="rgba(16,185,129,0.15)" stroke="#10b981" strokeWidth="1.5"/>
+      <text x="345" y="87" textAnchor="middle" fill="#10b981" fontSize="9" fontWeight="600" fontFamily="JetBrains Mono">H(outer)</text>
+      <text x="345" y="101" textAnchor="middle" fill="#64748b" fontSize="7" fontFamily="JetBrains Mono">DLP-Hash</text>
+      {/* arrow to tag */}
+      <line x1="380" y1="90" x2="420" y2="90" stroke="#64748b" strokeWidth="1.5"/>
+      {/* tag output */}
+      <rect x="420" y="75" width="70" height="30" rx="6" fill="rgba(16,185,129,0.2)" stroke="#10b981" strokeWidth="2"/>
+      <text x="455" y="95" textAnchor="middle" fill="#10b981" fontSize="11" fontWeight="700" fontFamily="JetBrains Mono">TAG</text>
+      <defs><marker id="arrowH" markerWidth="6" markerHeight="6" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6" fill="#64748b"/></marker></defs>
+    </svg>
+  );
+
   return (<>
-    <div className="page-header"><h2><span className="pa-tag">PA#10</span> HMAC</h2><p>H((k⊕opad) ‖ H((k⊕ipad) ‖ m)) — MAC from CRHF</p></div>
-    <div className="card"><h3>🏷️ Compute HMAC</h3>
-      <div className="input-group"><label>Key (hex)</label><input value={key} onChange={e => setKey(e.target.value)} /></div>
-      <div className="input-group"><label>Message (hex)</label><input value={msg} onChange={e => setMsg(e.target.value)} /></div>
-      <button className="btn btn-primary" onClick={run} disabled={loading}>{loading ? <span className="spinner"/> : "HMAC"}</button>
+    <div className="page-header">
+      <h2><span className="pa-tag">PA#10</span> HMAC — Hash-Based MAC</h2>
+      <p>HMAC = H((k ⊕ opad) ‖ H((k ⊕ ipad) ‖ m)) using DLP-Hash from PA#8.</p>
+    </div>
+
+    <div className="card">
+      <h3>🔧 HMAC Construction</h3>
+      <DiagramSVG />
+      <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', textAlign: 'center', marginTop: 4 }}>
+        ipad = 0x36 repeated, opad = 0x5c repeated. H = DLP_Hash from PA#8.
+      </div>
+    </div>
+
+    <div className="card">
+      <h3>🏷️ Compute HMAC Tag</h3>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+        <div className="input-group"><label>Key k (hex)</label><input value={key} onChange={e => setKey(e.target.value)} /></div>
+        <div className="input-group"><label>Message m (hex)</label><input value={msg} onChange={e => setMsg(e.target.value)} /></div>
+      </div>
+      <div className="input-row">
+        <button className="btn btn-primary" onClick={run} disabled={loading}>{loading ? <span className="spinner"/> : "🏷️ Compute HMAC"}</button>
+        {result?.tag_hex && <button className="btn btn-success" onClick={runVerify} disabled={verifyLoading}>{verifyLoading ? <span className="spinner"/> : "✅ Verify + Forgery Test"}</button>}
+      </div>
       {result && !result.error && (
         <div className="fade-in" style={{ marginTop: "0.75rem" }}>
           <Field label="HMAC Tag (hex)" value={result.tag_hex} accent="var(--accent-green)" />
-          <div style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginTop: 4 }}>
-            HMAC = H((k ⊕ opad) ‖ H((k ⊕ ipad) ‖ m))
-          </div>
         </div>
       )}
-      {result?.error && <div className="output-box fade-in"><pre style={{color:"var(--accent-red)"}}>{result.error}</pre></div>}
     </div>
+
+    {verifyResult && (
+      <div className="card fade-in">
+        <h3>🔒 Verification & Forgery Demo</h3>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+          <div style={{ background: 'rgba(16,185,129,0.08)', borderRadius: 8, padding: '0.75rem', border: '1px solid rgba(16,185,129,0.3)' }}>
+            <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginBottom: 6 }}>Original message</div>
+            <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '0.75rem', color: 'var(--accent-cyan)', marginBottom: 8, wordBreak: 'break-all' }}>{msg}</div>
+            <span className={`badge ${verifyResult.valid ? 'badge-success' : 'badge-error'}`}>
+              {verifyResult.valid ? '✅ HMAC Valid' : '❌ HMAC Invalid'}
+            </span>
+          </div>
+          <div style={{ background: 'rgba(239,68,68,0.08)', borderRadius: 8, padding: '0.75rem', border: '1px solid rgba(239,68,68,0.3)' }}>
+            <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginBottom: 6 }}>Tampered message</div>
+            <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '0.75rem', color: 'var(--accent-red)', marginBottom: 8, wordBreak: 'break-all' }}>{verifyResult.tamperedMsg}</div>
+            <span className={`badge ${verifyResult.invalid ? 'badge-error' : 'badge-success'}`}>
+              {verifyResult.invalid ? '⚠️ Forgery Accepted!' : '✅ Forgery Rejected'}
+            </span>
+          </div>
+        </div>
+        <div style={{ marginTop: '0.75rem', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+          Even a 1-bit change to the message invalidates the tag — EUF-CMA security.
+        </div>
+      </div>
+    )}
   </>);
 }
 
@@ -370,16 +647,31 @@ export function PA11() {
   </>);
 }
 
-// ── PA#12: RSA ───────────────────────────────────────────────────────────────
+// ── PA#12: RSA — Determinism Attack Demo ─────────────────────────────────────
 export function PA12() {
   const [msg, setMsg] = useState(42);
   const [result, setResult] = useState(null);
+  const [detResult, setDetResult] = useState(null);
+  const [usePkcs, setUsePkcs] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [detLoading, setDetLoading] = useState(false);
+
   const run = async () => { setLoading(true); setResult(await apiFetch("/pa12/encrypt", { message: msg })); setLoading(false); };
+  const runDet = async () => {
+    setDetLoading(true);
+    const r = await apiFetch("/pa12/determinism", { message: msg, use_pkcs: usePkcs });
+    setDetResult(r); setDetLoading(false);
+  };
+
   return (<>
-    <div className="page-header"><h2><span className="pa-tag">PA#12</span> RSA Encryption</h2><p>Textbook RSA with PKCS#1 v1.5 padding</p></div>
-    <div className="card"><h3>🗝️ RSA Encrypt/Decrypt</h3>
-      <div className="input-group"><label>Message (integer)</label><input type="number" value={msg} onChange={e => setMsg(+e.target.value)} /></div>
+    <div className="page-header">
+      <h2><span className="pa-tag">PA#12</span> RSA — Textbook vs PKCS#1 v1.5</h2>
+      <p>Textbook RSA is deterministic → identical ciphertexts leak plaintext. PKCS random padding fixes this.</p>
+    </div>
+
+    <div className="card">
+      <h3>🗝️ RSA Encrypt/Decrypt (Textbook)</h3>
+      <div className="input-group"><label>Message m (integer)</label><input type="number" value={msg} onChange={e => setMsg(+e.target.value)} /></div>
       <button className="btn btn-primary" onClick={run} disabled={loading}>{loading ? <span className="spinner"/> : "Encrypt → Decrypt"}</button>
       {result && !result.error && (
         <div className="fade-in" style={{ marginTop: "0.75rem" }}>
@@ -393,7 +685,73 @@ export function PA12() {
           <Field label="Decrypted m' = c^d mod N" value={result.decrypted} mono={false} accent="var(--accent-green)" />
         </div>
       )}
-      {result?.error && <div className="output-box fade-in"><pre style={{color:"var(--accent-red)"}}>{result.error}</pre></div>}
+    </div>
+
+    <div className="card" style={{ borderColor: usePkcs ? 'rgba(16,185,129,0.4)' : 'rgba(239,68,68,0.4)' }}>
+      <h3>🔬 Determinism Attack Demo</h3>
+      <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginBottom: '0.5rem' }}>
+        Click "Encrypt Twice" — in Textbook mode, both ciphertexts are <strong>identical</strong> (deterministic = information leaks!).
+        Switch to PKCS#1 v1.5 — random PS padding makes each ciphertext different.
+      </p>
+      <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', flexWrap: 'wrap', marginBottom: '0.5rem' }}>
+        <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.82rem', cursor: 'pointer',
+          padding: '0.4rem 0.7rem', borderRadius: 6,
+          background: usePkcs ? 'rgba(16,185,129,0.12)' : 'rgba(239,68,68,0.08)',
+          border: `1px solid ${usePkcs ? 'var(--accent-green)' : 'var(--accent-red)'}`,
+          color: usePkcs ? 'var(--accent-green)' : 'var(--accent-red)' }}>
+          <input type="checkbox" checked={usePkcs} onChange={e => { setUsePkcs(e.target.checked); setDetResult(null); }} />
+          {usePkcs ? '✅ PKCS#1 v1.5 (randomized)' : '⚠️ Textbook RSA (deterministic)'}
+        </label>
+      </div>
+      <button className="btn btn-danger" onClick={runDet} disabled={detLoading}>
+        {detLoading ? <span className="spinner"/> : "🔄 Encrypt Twice (same m)"}
+      </button>
+
+      {detResult && (
+        <div className="fade-in" style={{ marginTop: '0.75rem' }}>
+          <div className="result-row" style={{ marginBottom: '0.75rem' }}>
+            <span className="badge badge-info">Mode: {detResult.mode}</span>
+            <span className={`badge ${detResult.identical ? 'badge-error' : 'badge-success'}`}>
+              {detResult.identical ? '⚠️ Ciphertexts IDENTICAL — plaintext leaked!' : '✅ Ciphertexts DIFFER — safe'}
+            </span>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+            <div style={{ background: 'rgba(59,130,246,0.08)', borderRadius: 8, padding: '0.75rem', border: '1px solid rgba(59,130,246,0.2)' }}>
+              <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginBottom: 4 }}>Encryption #1</div>
+              <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '0.75rem', color: 'var(--accent-cyan)', wordBreak: 'break-all' }}>{detResult.c1_prefix}...</div>
+            </div>
+            <div style={{ background: 'rgba(139,92,246,0.08)', borderRadius: 8, padding: '0.75rem', border: '1px solid rgba(139,92,246,0.2)' }}>
+              <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginBottom: 4 }}>Encryption #2</div>
+              <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '0.75rem', color: 'var(--accent-purple)', wordBreak: 'break-all' }}>{detResult.c2_prefix}...</div>
+            </div>
+          </div>
+
+          {detResult.identical && (
+            <div style={{ background: 'linear-gradient(135deg, rgba(239,68,68,0.12), rgba(245,158,11,0.08))',
+              borderRadius: 8, padding: '0.75rem', border: '1px solid rgba(239,68,68,0.3)', textAlign: 'center', marginTop: '0.75rem' }}>
+              <div style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--accent-red)' }}>
+                🚨 Identical ciphertexts: plaintext leaked!
+              </div>
+              <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: 4 }}>
+                An attacker sees c₁ = c₂ and knows the same message was sent both times.
+              </div>
+            </div>
+          )}
+
+          {detResult.ps1_hex && (
+            <div className="card" style={{ marginTop: '0.75rem', background: 'rgba(16,185,129,0.05)', borderColor: 'rgba(16,185,129,0.3)' }}>
+              <h3 style={{ fontSize: '0.85rem', color: 'var(--accent-green)' }}>🎲 Random Padding Bytes (PS)</h3>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+                <Field label="PS₁ (random, non-zero)" value={detResult.ps1_hex} accent="var(--accent-blue)" />
+                <Field label="PS₂ (random, non-zero)" value={detResult.ps2_hex} accent="var(--accent-purple)" />
+              </div>
+              <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: 4 }}>
+                Format: 00 ‖ 02 ‖ PS ‖ 00 ‖ m — random PS makes each encryption unique.
+              </div>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   </>);
 }
