@@ -216,6 +216,38 @@ def api_cpa_decrypt(req: EncryptRequest):
     m = cipher.decrypt(k, r, c)
     return {"plaintext_hex": m.hex()}
 
+class CPAGameRequest(BaseModel):
+    m0_hex: str
+    m1_hex: str
+    reuse_nonce: bool = False
+
+@app.post("/pa03/cpa_challenge")
+def api_cpa_challenge(req: CPAGameRequest):
+    import secrets
+    from pa03_cpa.cpa import CPA_Cipher
+    prf = get_aes_prf()
+    k = secrets.token_bytes(16)
+    m0 = bytes.fromhex(req.m0_hex)
+    m1 = bytes.fromhex(req.m1_hex)
+    max_len = max(len(m0), len(m1))
+    m0 = m0.ljust(max_len, b'\x00')
+    m1 = m1.ljust(max_len, b'\x00')
+    b = secrets.randbelow(2)
+    cipher = CPA_Cipher(prf)
+    if req.reuse_nonce:
+        fixed_nonce = bytes(16)
+        pad = prf.F(k, fixed_nonce)
+        m_b = m0 if b == 0 else m1
+        padded = m_b + bytes(-len(m_b) % 16)
+        c = bytes(a ^ b_ for a, b_ in zip(padded, (pad * ((len(padded)//16)+1))[:len(padded)]))
+        nonce_hex, ct_hex = fixed_nonce.hex(), c.hex()
+    else:
+        m_b = m0 if b == 0 else m1
+        r, c = cipher.encrypt(k, m_b)
+        nonce_hex, ct_hex = r.hex(), c.hex()
+    return {"nonce_hex": nonce_hex, "ciphertext_hex": ct_hex, "b": b,
+            "m0_len": len(m0), "m1_len": len(m1), "reuse_nonce": req.reuse_nonce}
+
 
 # ── PA#4: Modes ───────────────────────────────────────────────────────────────
 
@@ -328,9 +360,41 @@ def api_birthday(req: BirthdayRequest):
         result["m1_hex"] = m1.hex()
         result["m2_hex"] = m2.hex()
         result["collision_found"] = True
+        # Compute truncated hash for display
+        h1 = dlp.hash(m1).hex()[:req.bit_size // 4]
+        h2 = dlp.hash(m2).hex()[:req.bit_size // 4]
+        result["h1"] = h1
+        result["h2"] = h2
     else:
         result["collision_found"] = False
     return result
+
+class BirthdayCurveRequest(BaseModel):
+    bit_size: int = 12
+    num_trials: int = 20
+
+@app.post("/pa09/birthday_curve")
+def api_birthday_curve(req: BirthdayCurveRequest):
+    import math
+    from pa09_birthday.birthday import birthday_attack
+    dlp = get_dlp_hash()
+    curve_data = []
+    for n in [8, 10, 12, 14, 16]:
+        attempts_list = []
+        for _ in range(req.num_trials):
+            _, _, att = birthday_attack(dlp, n)
+            attempts_list.append(att)
+        expected = int(2 ** (n / 2))
+        avg = round(sum(attempts_list) / len(attempts_list), 1)
+        curve_data.append({"bit_size": n, "expected_2n2": expected,
+            "avg_attempts": avg, "min_attempts": min(attempts_list),
+            "max_attempts": max(attempts_list), "trials": req.num_trials,
+            "ratio_vs_expected": round(avg / expected, 3)})
+    N = 2 ** req.bit_size
+    prob_curve = [{"k": k, "p": round(1 - math.exp(-k*k / (2*N)), 4)}
+                  for k in range(0, int(3 * (N**0.5)), max(1, int(N**0.5 / 50)))]
+    return {"curve_data": curve_data, "probability_curve": prob_curve,
+            "selected_bit_size": req.bit_size, "expected_collision_point": 2 ** (req.bit_size / 2)}
 
 
 # ── PA#10: HMAC ───────────────────────────────────────────────────────────────
@@ -371,6 +435,47 @@ def api_dh_exchange():
         "shared_key_matches": KA == KB,
         "shared_key_prefix": str(KA)[:20] + "..."
     }
+
+@app.get("/pa11/dh_interactive")
+def api_dh_interactive():
+    from pa11_dh.dh import dh_alice_step1, dh_bob_step1, dh_alice_step2, dh_bob_step2
+    group = get_dh_group()
+    a, A = dh_alice_step1(group)
+    b, B = dh_bob_step1(group)
+    KA = dh_alice_step2(group, a, B)
+    KB = dh_bob_step2(group, b, A)
+    return {"p": hex(group.p), "g": hex(group.g), "q": hex(group.q),
+            "alice": {"private": hex(a), "public": hex(A)},
+            "bob": {"private": hex(b), "public": hex(B)},
+            "alice_shared": hex(KA), "bob_shared": hex(KB),
+            "keys_match": KA == KB, "shared_key": hex(KA)}
+
+class MITMRequest(BaseModel):
+    enable_eve: bool = True
+
+@app.post("/pa11/mitm")
+def api_dh_mitm(req: MITMRequest):
+    from pa11_dh.dh import dh_alice_step1, dh_bob_step1, dh_alice_step2, dh_bob_step2
+    group = get_dh_group()
+    a, A = dh_alice_step1(group)
+    b, B = dh_bob_step1(group)
+    if req.enable_eve:
+        e, E = dh_alice_step1(group)
+        K_ae = dh_alice_step2(group, a, E)
+        K_be = dh_bob_step2(group, b, E)
+        K_ea = dh_bob_step2(group, e, A)
+        K_eb = dh_alice_step2(group, e, B)
+        return {"alice": {"public": hex(A), "thinks_shared": hex(K_ae)},
+                "bob": {"public": hex(B), "thinks_shared": hex(K_be)},
+                "eve": {"public": hex(E), "key_with_alice": hex(K_ea), "key_with_bob": hex(K_eb)},
+                "eve_sees_alice": K_ea == K_ae, "eve_sees_bob": K_eb == K_be,
+                "alice_bob_match": K_ae == K_be, "mitm_active": True}
+    else:
+        KA = dh_alice_step2(group, a, B)
+        KB = dh_bob_step2(group, b, A)
+        return {"alice": {"public": hex(A), "thinks_shared": hex(KA)},
+                "bob": {"public": hex(B), "thinks_shared": hex(KB)},
+                "keys_match": KA == KB, "mitm_active": False}
 
 
 # ── PA#12: RSA ────────────────────────────────────────────────────────────────

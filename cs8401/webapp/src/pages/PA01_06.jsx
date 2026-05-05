@@ -328,41 +328,140 @@ export function PA02() {
   </>);
 }
 
-// ── PA#3: CPA Encryption ─────────────────────────────────────────────────────
+// ── PA#3: IND-CPA Game ───────────────────────────────────────────────────────
 export function PA03() {
-  const [key, setKey] = useState("000102030405060708090a0b0c0d0e0f");
-  const [msg, setMsg] = useState("48656c6c6f");
-  const [result, setResult] = useState(null);
+  const [m0, setM0] = useState("48656c6c6f000000000000000000000000");
+  const [m1, setM1] = useState("576f726c64000000000000000000000000");
+  const [reuseNonce, setReuseNonce] = useState(false);
+  const [challenge, setChallenge] = useState(null);
+  const [guessed, setGuessed] = useState(false);
+  const [history, setHistory] = useState([]);
   const [loading, setLoading] = useState(false);
 
-  const run = async () => {
+  const encrypt = async () => {
     setLoading(true);
-    const r = await apiFetch("/pa03/encrypt", { key_hex: key, message_hex: msg });
-    setResult(r);
+    setGuessed(false);
+    const r = await apiFetch("/pa03/cpa_challenge", { m0_hex: m0, m1_hex: m1, reuse_nonce: reuseNonce });
+    setChallenge(r);
     setLoading(false);
   };
 
+  const guess = (g) => {
+    if (!challenge || guessed) return;
+    const correct = g === challenge.b;
+    setGuessed(true);
+    setHistory(prev => [...prev, { round: prev.length + 1, guess: g, actual: challenge.b, correct,
+      nonce: challenge.nonce_hex, reuse: challenge.reuse_nonce }]);
+  };
+
+  const correctCount = history.filter(h => h.correct).length;
+  const total = history.length;
+  const advantage = total > 0 ? Math.abs((correctCount / total) - 0.5) * 2 : 0;
+
   return (<>
     <div className="page-header">
-      <h2><span className="pa-tag">PA#3</span> CPA-Secure Encryption</h2>
-      <p>PRF-based encryption with random nonce — IND-CPA secure</p>
+      <h2><span className="pa-tag">PA#3</span> IND-CPA Game — Play the Adversary</h2>
+      <p>Can you distinguish which message was encrypted? Advantage should ≈ 0 in secure mode.</p>
     </div>
+
     <div className="card">
-      <h3>🔒 Encrypt</h3>
-      <div className="input-group"><label>Key (hex, 16 bytes)</label><input value={key} onChange={e => setKey(e.target.value)} /></div>
-      <div className="input-group"><label>Message (hex)</label><input value={msg} onChange={e => setMsg(e.target.value)} /></div>
-      <button className="btn btn-primary" onClick={run} disabled={loading}>{loading ? <span className="spinner"/> : "Encrypt"}</button>
-      {result && !result.error && (
-        <div className="fade-in" style={{ marginTop: "0.75rem" }}>
-          <Field label="Nonce / IV (hex)" value={result.nonce_hex} />
-          <Field label="Ciphertext (hex)" value={result.ciphertext_hex} accent="var(--accent-purple)" />
-          <div style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginTop: 4 }}>
-            Ciphertext = F_k(nonce) ⊕ message — safe to reuse key with fresh nonce
-          </div>
+      <h3>📝 Step 1: Choose Two Messages</h3>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+        <div className="input-group">
+          <label>m₀ (hex)</label>
+          <input value={m0} onChange={e => setM0(e.target.value)} />
+        </div>
+        <div className="input-group">
+          <label>m₁ (hex)</label>
+          <input value={m1} onChange={e => setM1(e.target.value)} />
+        </div>
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginTop: '0.25rem' }}>
+        <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.8rem', cursor: 'pointer', color: reuseNonce ? 'var(--accent-red)' : 'var(--text-secondary)' }}>
+          <input type="checkbox" checked={reuseNonce} onChange={e => { setReuseNonce(e.target.checked); setHistory([]); }} />
+          ⚠️ Reuse Nonce (breaks CPA security)
+        </label>
+      </div>
+    </div>
+
+    <div className="card">
+      <h3>🔒 Step 2: Challenger Encrypts</h3>
+      <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginBottom: '0.5rem' }}>
+        Challenger picks random b ∈ {'{0,1}'}, encrypts m<sub>b</sub>, shows you C* = Enc<sub>k</sub>(m<sub>b</sub>).
+      </p>
+      <button className="btn btn-primary" onClick={encrypt} disabled={loading}>
+        {loading ? <span className="spinner"/> : "🎲 Encrypt (pick random b)"}
+      </button>
+      {challenge && (
+        <div className="fade-in" style={{ marginTop: '0.75rem' }}>
+          <Field label="Nonce r" value={challenge.nonce_hex} />
+          <Field label="Ciphertext C*" value={challenge.ciphertext_hex} accent="var(--accent-blue)" />
         </div>
       )}
-      {result?.error && <div className="output-box fade-in"><pre style={{color:"var(--accent-red)"}}>{result.error}</pre></div>}
     </div>
+
+    {challenge && !guessed && (
+      <div className="card fade-in" style={{ borderColor: 'var(--accent-amber)' }}>
+        <h3>🤔 Step 3: Guess b</h3>
+        <p style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', marginBottom: '0.5rem' }}>
+          Was m₀ or m₁ encrypted?
+        </p>
+        <div style={{ display: 'flex', gap: '0.75rem' }}>
+          <button className="btn btn-primary" onClick={() => guess(0)} style={{ flex: 1, fontSize: '1rem', padding: '0.75rem' }}>
+            b = 0 (m₀)
+          </button>
+          <button className="btn btn-danger" onClick={() => guess(1)} style={{ flex: 1, fontSize: '1rem', padding: '0.75rem' }}>
+            b = 1 (m₁)
+          </button>
+        </div>
+      </div>
+    )}
+
+    {guessed && (
+      <div className="card fade-in" style={{ borderColor: history[history.length-1]?.correct ? 'var(--accent-green)' : 'var(--accent-red)' }}>
+        <h3>{history[history.length-1]?.correct ? '✅ Correct!' : '❌ Wrong!'}</h3>
+        <div className="result-row">
+          <span className={`badge ${history[history.length-1]?.correct ? 'badge-success' : 'badge-error'}`}>
+            Actual b = {challenge.b}, you guessed {history[history.length-1]?.guess}
+          </span>
+        </div>
+        <button className="btn btn-primary" onClick={encrypt} style={{ marginTop: '0.5rem' }}>
+          Next Round →
+        </button>
+      </div>
+    )}
+
+    {history.length > 0 && (
+      <div className="card">
+        <h3>📊 Advantage Counter ({total} rounds)</h3>
+        <div style={{ display: 'flex', gap: '1rem', alignItems: 'center', flexWrap: 'wrap', marginBottom: '0.75rem' }}>
+          <span className="badge badge-info">Correct: {correctCount}/{total} ({total > 0 ? (correctCount/total*100).toFixed(0) : 0}%)</span>
+          <span className={`badge ${advantage < 0.2 ? 'badge-success' : 'badge-error'}`}>
+            Advantage: {advantage.toFixed(3)} {advantage < 0.15 ? '≈ 0 ✓' : '(security broken!)'}
+          </span>
+          {reuseNonce && <span className="badge badge-error">⚠️ Nonce reuse active</span>}
+        </div>
+        <div style={{ width: '100%', height: 8, borderRadius: 4, background: 'var(--bg-input)', overflow: 'hidden', border: '1px solid var(--border)' }}>
+          <div style={{ width: `${total > 0 ? (correctCount/total)*100 : 50}%`, height: '100%',
+            background: advantage < 0.2 ? 'var(--accent-green)' : 'var(--accent-red)',
+            transition: 'width 0.3s ease' }} />
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.65rem', color: 'var(--text-muted)', marginTop: 2 }}>
+          <span>0% (always wrong)</span><span>50% (random)</span><span>100% (always right)</span>
+        </div>
+        <div style={{ marginTop: '0.75rem', display: 'flex', gap: 3, flexWrap: 'wrap' }}>
+          {history.map(h => (
+            <span key={h.round} className={`badge ${h.correct ? 'badge-success' : 'badge-error'}`}
+              style={{ fontSize: '0.6rem', padding: '2px 5px' }}>
+              R{h.round}: {h.correct ? '✓' : '✗'}
+            </span>
+          ))}
+        </div>
+        <button className="btn btn-ghost" onClick={() => setHistory([])} style={{ marginTop: '0.5rem', fontSize: '0.72rem' }}>
+          Reset Counter
+        </button>
+      </div>
+    )}
   </>);
 }
 
